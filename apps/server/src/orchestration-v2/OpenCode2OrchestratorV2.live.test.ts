@@ -223,6 +223,7 @@ const waitFor = Effect.fn("OpenCode2Live.waitFor")(function* (
   done: (projection: OrchestrationV2ThreadProjection) => boolean,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- gated live run against a real OpenCode server; wall-clock polling of the projection is the intended probe.
   for (let attempt = 0; attempt < STEP_WAIT_SECONDS * 2; attempt += 1) {
     const projection = yield* orchestrator.getThreadProjection(threadId);
     if (done(projection)) return projection;
