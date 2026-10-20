@@ -1399,7 +1399,7 @@ it.effect.each([false, true])(
         assert.isBelow(elapsed, 1000, "TRUNCATE must return promptly while the reader stays open");
       }),
     ),
-  { skip: !supportsNoopCheckpoint, timeout: 15_000 },
+  { skip: !supportsNoopCheckpoint },
 );
 
 it.effect.each(["statement", "commit", "rollback", "partial failure", "worker failure"] as const)(

@@ -253,37 +253,34 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         }),
     );
 
-    it.effect(
-      "browses a workspace with more than 25,000 entries without truncation",
-      () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir();
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          for (let directory = 0; directory < 26; directory++) {
-            const directoryPath = path.join(cwd, `folder-${directory}`);
-            yield* fileSystem.makeDirectory(directoryPath);
-            yield* Effect.forEach(
-              Array.from({ length: 1000 }, (_, i) => i),
-              (i) => fileSystem.writeFileString(path.join(directoryPath, `file-${i}.txt`), ""),
-              { concurrency: 32, discard: true },
-            );
-          }
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
-          expect(root.entries).toHaveLength(26);
-          expect(root.truncated).toBe(false);
-          for (const directory of root.entries) {
-            const result = yield* workspaceEntries.list({ cwd, directoryPath: directory.path });
-            expect(result.entries).toHaveLength(1000);
-            expect(result.truncated).toBe(false);
-            expect(result.entries).toContainEqual({
-              path: `${directory.path}/file-999.txt`,
-              kind: "file",
-            });
-          }
-        }),
-      60_000,
+    it.effect("browses a workspace with more than 25,000 entries without truncation", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        for (let directory = 0; directory < 26; directory++) {
+          const directoryPath = path.join(cwd, `folder-${directory}`);
+          yield* fileSystem.makeDirectory(directoryPath);
+          yield* Effect.forEach(
+            Array.from({ length: 1000 }, (_, i) => i),
+            (i) => fileSystem.writeFileString(path.join(directoryPath, `file-${i}.txt`), ""),
+            { concurrency: 32, discard: true },
+          );
+        }
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        expect(root.entries).toHaveLength(26);
+        expect(root.truncated).toBe(false);
+        for (const directory of root.entries) {
+          const result = yield* workspaceEntries.list({ cwd, directoryPath: directory.path });
+          expect(result.entries).toHaveLength(1000);
+          expect(result.truncated).toBe(false);
+          expect(result.entries).toContainEqual({
+            path: `${directory.path}/file-999.txt`,
+            kind: "file",
+          });
+        }
+      }),
     );
 
     it.effect("includes images and other binary files in non-git workspace indexes", () =>

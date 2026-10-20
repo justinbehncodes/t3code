@@ -210,8 +210,7 @@ describe("code-view worker lifecycle", () => {
     };
   }
 
-  // Two cold starts of real workers can outlast the default timeout on a loaded runner.
-  it("starts workers on demand and expires idle pools", { timeout: 30_000 }, async () => {
+  it("starts workers on demand and expires idle pools", async () => {
     setup();
     await using workers = await workerEnvironment();
     const view = await workers.render(renderViews(0));

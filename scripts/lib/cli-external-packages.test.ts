@@ -139,23 +139,18 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   // loaded by Node, so their closure genuinely does not need to be external.
   const isRuntimeExternal = isRuntimeExternalCliDependency;
 
-  // A cold walk of the pnpm store can exceed the root timeout when the Windows
-  // lane runs four filesystem-heavy workspace suites at once.
-  it.effect(
-    "finds the runtime-external packages on disk",
-    () =>
-      Effect.gen(function* () {
-        const installed = yield* readInstalledPackages;
-        const found = [...installed.keys()].filter(isRuntimeExternal);
+  it.effect("finds the runtime-external packages on disk", () =>
+    Effect.gen(function* () {
+      const installed = yield* readInstalledPackages;
+      const found = [...installed.keys()].filter(isRuntimeExternal);
 
-        for (const required of ["node-pty", "node-addon-api"]) {
-          assert.ok(
-            found.includes(required),
-            `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
-          );
-        }
-      }),
-    120_000,
+      for (const required of ["node-pty", "node-addon-api"]) {
+        assert.ok(
+          found.includes(required),
+          `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
+        );
+      }
+    }),
   );
 
   it.effect("keeps every runtime dependency of an external package external too", () =>

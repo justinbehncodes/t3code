@@ -183,5 +183,5 @@ describe("rejectRequestsUntilServing", () => {
     expect(servingUpgrade.statusCode).toBe(101);
     expect(servingUpgrade.headers["retry-after"]).toBeUndefined();
     expect(writeErrors).toEqual([]);
-  }, 5_000);
+  });
 });

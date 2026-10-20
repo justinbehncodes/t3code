@@ -39,48 +39,45 @@ describe("__ssh-helper pick-port", () => {
       }),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "skips a port another server answers on loopback",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pick-port-" });
-        yield* fs.writeFileString(`${root}/preload.cjs`, MACOS_BIND_PRELOAD);
-        const holder = yield* holdWildcardPort;
-        const heldPort = (holder.address() as NodeNet.AddressInfo).port;
+  it.effect.skipIf(windowsHost)("skips a port another server answers on loopback", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pick-port-" });
+      yield* fs.writeFileString(`${root}/preload.cjs`, MACOS_BIND_PRELOAD);
+      const holder = yield* holdWildcardPort;
+      const heldPort = (holder.address() as NodeNet.AddressInfo).port;
 
-        const child = yield* spawner.spawn(
-          ChildProcess.make(process.execPath, [
-            ...(linuxHost ? ["--require", `${root}/preload.cjs`] : []),
-            "--experimental-strip-types",
-            new URL("../bin.ts", import.meta.url).pathname,
-            "__ssh-helper",
-            "pick-port",
-            "",
-            String(heldPort),
-            "20",
-          ]),
-        );
-        const [stdout, exitCode] = yield* Effect.all(
-          [
-            child.stdout.pipe(
-              Stream.decodeText(),
-              Stream.runFold(
-                () => "",
-                (acc, chunk) => acc + chunk,
-              ),
+      const child = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, [
+          ...(linuxHost ? ["--require", `${root}/preload.cjs`] : []),
+          "--experimental-strip-types",
+          new URL("../bin.ts", import.meta.url).pathname,
+          "__ssh-helper",
+          "pick-port",
+          "",
+          String(heldPort),
+          "20",
+        ]),
+      );
+      const [stdout, exitCode] = yield* Effect.all(
+        [
+          child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (acc, chunk) => acc + chunk,
             ),
-            child.exitCode.pipe(Effect.map(Number)),
-          ],
-          { concurrency: "unbounded" },
-        );
+          ),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      );
 
-        assert.equal(exitCode, 0);
-        const picked = Number(stdout);
-        assert.isAbove(picked, heldPort);
-        assert.isBelow(picked, heldPort + 20);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    30_000,
+      assert.equal(exitCode, 0);
+      const picked = Number(stdout);
+      assert.isAbove(picked, heldPort);
+      assert.isBelow(picked, heldPort + 20);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

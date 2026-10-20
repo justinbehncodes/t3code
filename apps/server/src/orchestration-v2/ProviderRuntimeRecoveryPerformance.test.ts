@@ -478,16 +478,14 @@ const formatTable = (rows: ReadonlyArray<Measurement>) => {
     .join("\n");
 };
 
-it.live(
-  "restart recovery records one continuation per active thread and is idempotent",
-  () =>
-    Effect.gen(function* () {
-      const row = yield* measure({ settled: 500, active: 20 });
-      yield* Console.log(`provider runtime recovery (ms)\n${formatTable([row])}`);
-    }),
-  60_000,
+it.live("restart recovery records one continuation per active thread and is idempotent", () =>
+  Effect.gen(function* () {
+    const row = yield* measure({ settled: 500, active: 20 });
+    yield* Console.log(`provider runtime recovery (ms)\n${formatTable([row])}`);
+  }),
 );
 
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- opt-in benchmark that seeds up to 50k threads; it measures, it does not wait on a milestone.
 it.live.skipIf(process.env.T3_BENCH_RECOVERY !== "1")(
   "restart recovery scales with active threads, not settled history",
   () =>

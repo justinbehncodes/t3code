@@ -566,7 +566,6 @@ for (const { kind, folderVerb } of [
           NodeFS.rmSync(tempDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
         }
       }),
-    { timeout: 30_000 },
   );
 }
 
