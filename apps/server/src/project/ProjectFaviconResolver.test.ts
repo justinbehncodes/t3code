@@ -329,7 +329,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
-    it.effect("scans large icon sources without an icon in reasonable time", () =>
+    it.effect("returns null for a large icon source without an icon", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
@@ -340,12 +340,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           `<!doctype html><html><head><title>guide</title></head><body>\n${filler.repeat(1200)}</body></html>`,
         );
 
-        const startedAt = performance.now();
-        const resolved = yield* resolver.resolvePath(cwd);
-        const elapsedMs = performance.now() - startedAt;
-
-        expect(resolved).toBeNull();
-        expect(elapsedMs).toBeLessThan(5_000);
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
       }),
     );
 

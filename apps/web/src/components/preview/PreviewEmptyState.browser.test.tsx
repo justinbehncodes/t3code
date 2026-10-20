@@ -58,13 +58,15 @@ function button(screen: Screen, name: string) {
   return match!;
 }
 
+const VISITED_AT = Date.parse("2026-01-01T00:00:00.000Z");
+
 describe("PreviewEmptyState", () => {
   it("lists a recent entry and a live server matching its host:port, and opens or forgets entries", async () => {
     setup();
     mocks.servers = [server(5173)];
     await using screen = await renderPreview([
-      { url: "https://myapp.test/admin#users", lastVisitedAt: Date.now(), title: "Admin" },
-      { url: "http://localhost:5173/", lastVisitedAt: Date.now(), title: "Recent Local" },
+      { url: "https://myapp.test/admin#users", lastVisitedAt: VISITED_AT, title: "Admin" },
+      { url: "http://localhost:5173/", lastVisitedAt: VISITED_AT, title: "Recent Local" },
     ]);
     const text = screen.container.textContent;
     expect(text).toContain("Recently used");

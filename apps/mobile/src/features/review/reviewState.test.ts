@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 it("stores review async loading and error state in atoms", () => {
-  const threadKey = `env-local:thread-review-state-${Date.now()}`;
+  const threadKey = "env-local:thread-review-state";
 
   setReviewTurnDiffLoading(threadKey, "turn-1", true);
   setReviewAsyncError(threadKey, "load failed");

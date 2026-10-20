@@ -740,7 +740,7 @@ it.live("an expired queued click never reaches the page", () =>
         boundingBox: async () => ({ x: 0, y: 0, width: 10, height: 10 }),
         click,
       } as never);
-      let now = performance.now();
+      let now = 1_000;
       const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
       yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
       const snapshot = yield* broker
@@ -822,7 +822,7 @@ it.effect(
           started.resolve();
           return release.promise;
         });
-        let now = performance.now();
+        let now = 1_000;
         const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
         yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
         const snapshot = yield* broker

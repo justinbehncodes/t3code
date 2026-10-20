@@ -202,10 +202,8 @@ describe("collectComposerInlineTokens", () => {
     );
   });
 
-  it("stays fast on unterminated bracket runs", () => {
-    const started = performance.now();
+  it("finds no tokens in long unterminated bracket runs", () => {
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
-    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   it("keeps skill and mention sources inside TeX out of the context chip list", () => {

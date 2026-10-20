@@ -159,13 +159,11 @@ describe("appendTerminalOutput under adversarial output", () => {
     expect(feed(["abcdef", "\rX"], 3).text).toBe(feed(["abcdef\rX"], 3).text);
   });
 
-  it("handles a colour change on every character in linear time", () => {
+  it("bounds output when every character changes colour", () => {
     const chunk = Array.from({ length: 200_000 }, (_, index) =>
       index % 2 === 0 ? "\u001b[31mx" : "\u001b[32my",
     ).join("");
-    const started = performance.now();
     const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, chunk);
-    expect(performance.now() - started).toBeLessThan(2_000);
     expect(terminalOutputPlainText(state.text).length).toBeLessThanOrEqual(64 * 1024);
   });
 

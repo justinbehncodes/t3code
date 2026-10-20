@@ -151,7 +151,7 @@ async function publishUrl(path: string, url: string) {
   await act(async () => {
     appAtomRegistry.set(
       state.assets.get(path)!,
-      AsyncResult.success({ relativeUrl: url, expiresAt: Date.now() + 60_000 }),
+      AsyncResult.success({ relativeUrl: url, expiresAt: Date.parse("2100-01-01T00:00:00.000Z") }),
     );
   });
 }

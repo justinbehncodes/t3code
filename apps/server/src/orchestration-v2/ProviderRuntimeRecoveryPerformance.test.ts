@@ -369,8 +369,10 @@ const seedScenario = Effect.fn(function* (scenario: Scenario) {
 
 const timed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
+    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- env-gated benchmark
     const start = performance.now();
     const value = yield* effect;
+    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- env-gated benchmark
     return [value, performance.now() - start] as const;
   });
 

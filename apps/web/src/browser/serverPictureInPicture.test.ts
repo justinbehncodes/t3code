@@ -26,7 +26,7 @@ function navigate(url: string, tabId = "tab") {
     navStatus: { _tag: "Success", url, title: "Document" },
     canGoBack: true,
     canGoForward: false,
-    updatedAt: new Date().toISOString(),
+    updatedAt: "2026-01-01T00:00:00.000Z",
   });
 }
 
