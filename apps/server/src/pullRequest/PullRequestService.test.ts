@@ -6489,6 +6489,7 @@ it.effect("releases an expired diff nobody reads again", () =>
     const collect = NodeVM.runInNewContext("gc") as () => void;
     const settle = Effect.promise(async () => {
       // A weak reference keeps its target for the rest of the job that created it.
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- ends the current job so WeakRef targets become collectable; a zero-delay macrotask boundary, not a wait for time
       await new Promise((resolve) => setImmediate(resolve));
       collect();
     });

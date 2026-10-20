@@ -42,6 +42,7 @@ const stopByPid = (pid: number) =>
     };
     signal("SIGTERM");
     for (let attempt = 0; attempt < 50 && isAlive(pid); attempt++) {
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- live provider probe waits for a real opencode process to exit; gated behind its env var
       yield* Effect.sleep("100 millis");
     }
     if (isAlive(pid)) signal("SIGKILL");
@@ -191,6 +192,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Server live", () => {
 
         yield* Scope.close(instanceScope, Exit.void);
         for (let attempt = 0; attempt < 50 && isAlive(-spawned.pid); attempt++) {
+          // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- live provider probe waits for a real opencode process to exit; gated behind its env var
           yield* Effect.sleep("100 millis");
         }
         assert.isFalse(isAlive(spawned.pid), `opencode serve ${spawned.pid} outlived its instance`);

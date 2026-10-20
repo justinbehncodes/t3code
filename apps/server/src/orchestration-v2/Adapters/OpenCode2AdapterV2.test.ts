@@ -5761,17 +5761,19 @@ describe("OpenCode2 adapter server connection", () => {
       // A spawned server stops after it has no borrowers for a while, so a
       // session must not keep holding the connection it reconnected with.
       const borrowers = { current: 0 };
+      const gate = makeProviderReplayGate(["reconnected"]);
       yield* Effect.gen(function* () {
         yield* openCode2ReplayRuntime(
           [
             ...opening,
             { type: "runtime_exit", status: "success" },
             out("event.subscribe"),
-            event("server.connected", {}),
+            event("server.connected", {}, "reconnected"),
           ],
-          { borrowers },
+          { borrowers, replayGate: gate },
         );
-        yield* Effect.sleep("200 millis");
+        yield* Effect.promise(() => gate.waitForReached("reconnected"));
+        gate.release("reconnected");
         assert.equal(borrowers.current, 1);
       }).pipe(Effect.scoped);
       assert.equal(borrowers.current, 0);

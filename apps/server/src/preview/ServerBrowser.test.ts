@@ -47,6 +47,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     }
     async contextFor(profileId: string, isolationKey?: string) {
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
+      contextRequested?.resolve();
       if (contextFailure) throw contextFailure;
       await contextGate?.promise;
       const context = makeContext(this.onClose);
@@ -220,6 +221,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
 const contexts: ReturnType<typeof makeContext>[] = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let contextRequested: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -321,6 +323,11 @@ const stallViewer = (
   const output = viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
   while (Queue.offerUnsafe(output, item));
 };
+// Not a clock wait: the mocks do no I/O, so once the macrotask queue turns, every promise
+// job the last step queued has run. Used where the assertion is that something did NOT happen.
+const drainPromiseJobs = Effect.promise(
+  () => new Promise<void>((resolve) => setImmediate(resolve)),
+);
 const viewerInput = (tabId: string, canOperate: boolean) => ({
   threadId: scope.thread.threadId,
   tabId,
@@ -334,6 +341,7 @@ beforeEach(() => {
   contexts.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  contextRequested = null;
   contextFailure = null;
   initialNavigation = null;
   pageCopy = "";
@@ -604,7 +612,7 @@ it.live.each([
         ).pipe(Effect.forkScoped);
         yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
         // Drain runnable promise work while the navigation gate remains closed.
-        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        yield* drainPromiseJobs;
         const status = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
           tabId,
@@ -626,7 +634,7 @@ it.live.each([
             input: { expression: "resumed()" },
           })
           .pipe(Effect.forkScoped);
-        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        yield* drainPromiseJobs;
         expect(events).toEqual([]);
         committed.resolve();
         yield* Fiber.join(navigate);
@@ -659,13 +667,20 @@ it.live.each([
       });
       const navigation = yield* viewer.input(message).pipe(Effect.forkScoped);
       yield* Effect.promise(() => started.promise);
+      const cdp = contexts[0]!.sessions.at(-1)!;
+      const send = cdp.send.getMockImplementation()!;
+      const typed = Promise.withResolvers<void>();
+      cdp.send.mockImplementation(async (operation, input) => {
+        if (operation === "Input.insertText") typed.resolve();
+        return send(operation, input);
+      });
       const correction = yield* Effect.gen(function* () {
         yield* viewer.input({ type: "navigate", url: "http://localhost:5173/fixed" });
         yield* viewer.input({ type: "text", text: "hello" });
       }).pipe(Effect.forkScoped);
       yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
-      // Check after runnable promises drain, without waiting for navigation or a timeout.
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      // The text reaches the page while the first navigation is still uncommitted.
+      yield* Effect.promise(() => typed.promise);
       expect(page.goto).toHaveBeenLastCalledWith(
         "http://localhost:5173/fixed",
         expect.objectContaining({ waitUntil: "commit" }),
@@ -699,11 +714,18 @@ it.live("a user-opened tab allows a corrected URL before its initial navigation 
         runtime: "server",
       });
       yield* Effect.promise(() => started.promise);
+      const page = contexts[1]!.page;
+      const goto = page.goto.getMockImplementation()!;
+      const corrected = Promise.withResolvers<void>();
+      page.goto.mockImplementation(async (next: string) => {
+        if (next === "http://localhost:5173/fixed") corrected.resolve();
+        return goto(next);
+      });
       const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
       const correction = yield* viewer
         .input({ type: "navigate", url: "http://localhost:5173/fixed" })
         .pipe(Effect.forkScoped);
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      yield* Effect.promise(() => corrected.promise);
       const lastNavigationBeforeCommit = contexts[1]!.page.goto.mock.calls.at(-1);
       committed.resolve();
       yield* Fiber.join(correction);
@@ -1216,13 +1238,12 @@ it.live("a popup becomes the agent's own tab and keeps its opener page", () =>
       const { broker, tabId } = yield* ready;
       const opener = contexts[0]!.page;
       const popup = makeContext();
-      opener.emit("popup", popup.page);
       const manager = yield* Manager.PreviewManager;
-      let sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
-      while (sessions.length < 2) {
-        yield* Effect.sleep("5 millis");
-        sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
-      }
+      const events = yield* manager.subscribeEvents;
+      opener.emit("popup", popup.page);
+      let event = yield* PubSub.take(events);
+      while (event.type !== "opened") event = yield* PubSub.take(events);
+      const sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
       const popupTab = sessions.find((session) => session.tabId !== tabId)!;
       const opened = sessions.find((session) => session.tabId === tabId)!;
       expect(popupTab).toMatchObject({ automationOwner: opened.automationOwner, reveal: false });
@@ -1241,9 +1262,10 @@ it.live("a popup becomes the agent's own tab and keeps its opener page", () =>
       expect(opener.goto).not.toHaveBeenCalled();
       expect(opener.close).not.toHaveBeenCalled();
       yield* Effect.promise(() => popup.page.close());
-      while ((yield* manager.list({ threadId: scope.thread.threadId })).sessions.length > 1) {
-        yield* Effect.sleep("5 millis");
+      while (event.type !== "closed" || event.tabId !== popupTab.tabId) {
+        event = yield* PubSub.take(events);
       }
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(1);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1416,9 +1438,11 @@ it.live("a download from a superseded navigation leaves the newer navigation loa
       page.emit("requestfailed", navigation);
       const saved = yield* Queue.unbounded<string>();
       const written = Promise.withResolvers<void>();
+      // The server deletes Playwright's copy last, after recording the download.
+      const deleted = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
-        delete: async () => {},
+        delete: async () => deleted.resolve(),
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -1435,10 +1459,15 @@ it.live("a download from a superseded navigation leaves the newer navigation loa
         frame: () => page,
       });
       written.resolve();
-      const status = () =>
-        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} });
-      while ((yield* status()).downloads?.length !== 1) yield* Effect.sleep("5 millis");
-      expect((yield* status()).loading).toBe(true);
+      yield* Effect.promise(() => deleted.promise);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.downloads).toHaveLength(1);
+      expect(status.loading).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1532,17 +1561,23 @@ it.live("closing a tab while a viewer is still opening it does not leave its pag
       const browser = yield* ServerBrowser.ServerBrowser;
       const manager = yield* Manager.PreviewManager;
       yield* Effect.yieldNow;
+      // The server mirrors manager events in its own fiber and exposes no signal when it has
+      // handled one, so this lets the failed launch and the close reach that fiber.
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- ServerBrowser's manager-event mirror has no observable completion point to await.
+      const letMirrorCatchUp = Effect.sleep("10 millis");
       contextFailure = new Error("first launch failed");
       const snapshot = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      yield* Effect.sleep("10 millis");
+      yield* letMirrorCatchUp;
       contextFailure = null;
       contextGate = Promise.withResolvers<void>();
+      const requested = Promise.withResolvers<void>();
+      contextRequested = requested;
       const attaching = yield* browser
         .attachViewer(viewerInput(snapshot.tabId, false))
         .pipe(Effect.flip, Effect.forkScoped);
-      yield* Effect.sleep("10 millis");
+      yield* Effect.promise(() => requested.promise);
       yield* manager.close({ threadId: scope.thread.threadId, tabId: snapshot.tabId });
-      yield* Effect.sleep("10 millis");
+      yield* letMirrorCatchUp;
       contextGate.resolve();
       expect((yield* Fiber.join(attaching))._tag).toBe("ServerBrowserTabNotFoundError");
       expect(contexts).toHaveLength(1);
@@ -1816,15 +1851,20 @@ it.live("a file picker replaces a stalled viewer backlog instead of being droppe
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
       const accept = Promise.withResolvers<string>();
+      // The server reads isMultiple while building the message it pushes in the same turn.
+      const offered = Promise.withResolvers<void>();
       page.emit("filechooser", {
-        isMultiple: () => false,
+        isMultiple: () => {
+          offered.resolve();
+          return false;
+        },
         element: () => ({ getAttribute: () => accept.promise }),
         setFiles: async () => {},
       });
       yield* Queue.clear(viewer.output);
       stallViewer(viewer, { _tag: "viewport", width: 1, height: 1 });
       accept.resolve(".csv");
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      yield* Effect.promise(() => offered.promise);
       expect(yield* Queue.clear(viewer.output)).toEqual([
         expect.objectContaining({ _tag: "fileChooser", accept: ".csv" }),
       ]);
@@ -1940,11 +1980,8 @@ it.live("an agent answers the page's file picker or sets files on a file input",
         operation: "status",
         input: {},
       });
-      let opened = yield* status;
-      while (!opened.fileChooser) {
-        yield* Effect.sleep("5 millis");
-        opened = yield* status;
-      }
+      yield* drainPromiseJobs;
+      const opened = yield* status;
       expect(opened.fileChooser).toEqual({ multiple: false, accept: ".csv" });
       yield* Effect.flip(upload({ paths: ["/tmp/a.csv", "/tmp/b.csv"] }));
       yield* upload({ paths: ["/tmp/a.csv"] });

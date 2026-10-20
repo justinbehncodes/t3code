@@ -835,9 +835,12 @@ describe("browser recording", () => {
     const firstStart = startBrowserRecording("recording-tab");
     await vi.waitFor(() => expect(startScreencast).toHaveBeenCalledOnce());
 
+    // Faked timers let the stop run until it waits on startup without its settle timeout firing.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const stopPromise = stopBrowserRecording("recording-tab");
     const restartAfterStop = stopPromise.then(() => startBrowserRecording("recording-tab"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
     const startCallsBeforeFirstSettled = startScreencast.mock.calls.length;
 
     finishStartingScreencast?.();

@@ -7,6 +7,7 @@ import * as NodeURL from "node:url";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -71,6 +72,28 @@ function processExists(pid: number): boolean {
     return false;
   }
 }
+
+// Real OS processes publish pids through files and exit without any event this process can
+// await, so these Linux-only fixtures poll the probe on the real clock.
+const pollRealProcess = <A>(probe: () => A | undefined) =>
+  Effect.gen(function* () {
+    while (true) {
+      const value = probe();
+      if (value !== undefined) return value;
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- real subprocess state (pid files, process exit) has no awaitable event
+      yield* Effect.sleep("10 millis");
+    }
+  }).pipe(Effect.timeout("2 seconds"));
+
+const readPidFile =
+  <A>(path: string, parse: (text: string) => A | undefined) =>
+  () => {
+    try {
+      return parse(NodeFS.readFileSync(path, "utf8"));
+    } catch {
+      return undefined;
+    }
+  };
 
 describe("terminatePosixOwnedProcessTree", () => {
   it("parses unified cgroup paths and escaped cgroup2 mountinfo", () => {
@@ -375,25 +398,18 @@ describe("terminatePosixOwnedProcessTree", () => {
       sentinel.unref();
       let detachedChildPid: number | undefined;
       try {
-        yield* Effect.gen(function* () {
-          while (!NodeFS.existsSync(readyPath)) yield* Effect.sleep("10 millis");
-        }).pipe(Effect.timeout("2 seconds"));
+        yield* pollRealProcess(() => (NodeFS.existsSync(readyPath) ? true : undefined));
         process.kill(provider.pid!, "SIGTERM");
-        detachedChildPid = yield* Effect.gen(function* () {
-          while (true) {
-            try {
-              const pid = Number(NodeFS.readFileSync(childPath, "utf8"));
-              if (Number.isSafeInteger(pid) && pid > 1) return pid;
-            } catch {}
-            yield* Effect.sleep("10 millis");
-          }
-        }).pipe(Effect.timeout("2 seconds"));
+        detachedChildPid = yield* pollRealProcess(
+          readPidFile(childPath, (text) => {
+            const pid = Number(text);
+            return Number.isSafeInteger(pid) && pid > 1 ? pid : undefined;
+          }),
+        );
         expect(processExists(detachedChildPid)).toBe(true);
         yield* AcpSessionRuntime.terminateLinuxCgroupLease(lease);
         expect(processExists(sentinel.pid!)).toBe(true);
-        yield* Effect.gen(function* () {
-          while (processExists(detachedChildPid!)) yield* Effect.sleep("10 millis");
-        }).pipe(Effect.timeout("2 seconds"));
+        yield* pollRealProcess(() => (processExists(detachedChildPid!) ? undefined : true));
         expect(NodeFS.existsSync(lease.path)).toBe(false);
 
         const replacement = controller.create();
@@ -552,15 +568,12 @@ describe("terminatePosixOwnedProcessTree", () => {
       const helper = NodeChildProcess.spawn(binary, [pidPath], { detached: true, stdio: "ignore" });
       helper.unref();
       try {
-        const published = yield* Effect.gen(function* () {
-          while (true) {
-            try {
-              const ids = NodeFS.readFileSync(pidPath, "utf8").trim().split(/\s+/).map(Number);
-              if (ids.length === 2 && ids.every(Number.isSafeInteger)) return ids;
-            } catch {}
-            yield* Effect.sleep("10 millis");
-          }
-        }).pipe(Effect.timeout("2 seconds"));
+        const published = yield* pollRealProcess(
+          readPidFile(pidPath, (text) => {
+            const ids = text.trim().split(/\s+/).map(Number);
+            return ids.length === 2 && ids.every(Number.isSafeInteger) ? ids : undefined;
+          }),
+        );
         const [workerTid, childPid] = published;
         expect(workerTid).not.toBe(helper.pid);
         expect(
@@ -747,6 +760,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       let childrenCalls = 0;
       let identityCalls = 0;
       let snapshotCalls = 0;
+      const secondPass = Deferred.makeUnsafe<void>();
       const fixture = makeController({
         processes: [server(), identity(100, process.pid, 100, 100), identity(110, 100, 110, 110)],
       });
@@ -754,6 +768,8 @@ describe("terminatePosixOwnedProcessTree", () => {
         ...fixture.controller,
         childPidsOf: (pid) => {
           childrenCalls += 1;
+          // A pass walks at most the two known descendants, so a third call means it polled again.
+          if (childrenCalls === 3) Deferred.doneUnsafe(secondPass, Effect.void);
           return fixture.controller.childPidsOf(pid);
         },
         identity: (pid) => {
@@ -784,7 +800,7 @@ describe("terminatePosixOwnedProcessTree", () => {
           parentStartTime: "",
         });
       }
-      yield* AcpSessionRuntime.observePosixOwnershipLedgerContinuously({
+      const observer = yield* AcpSessionRuntime.observePosixOwnershipLedgerContinuously({
         childQueues,
         controller,
         frontier,
@@ -793,18 +809,18 @@ describe("terminatePosixOwnedProcessTree", () => {
         rootPid: 100,
       }).pipe(Effect.forkIn(scope));
       const timerStartedAt = yield* Clock.currentTimeMillis;
-      yield* Effect.sleep(0);
+      yield* Effect.yieldNow;
       const timerDelay = (yield* Clock.currentTimeMillis) - timerStartedAt;
-      yield* Effect.sleep("80 millis");
+      yield* Deferred.await(secondPass);
 
       expect(timerDelay).toBeLessThan(250);
       expect(ledgerValuesCalls).toBe(0);
       expect(snapshotCalls).toBe(0);
-      expect(childrenCalls).toBeGreaterThan(0);
-      expect(childrenCalls).toBeLessThanOrEqual(12);
-      const callsAtClose = identityCalls + childrenCalls;
       yield* Scope.close(scope, Exit.void);
-      yield* Effect.sleep("60 millis");
+      // Closing the scope interrupts and awaits the observer, so no later pass can run.
+      expect(observer.pollUnsafe()).toBeDefined();
+      const callsAtClose = identityCalls + childrenCalls;
+      yield* Effect.yieldNow;
       expect(identityCalls + childrenCalls).toBe(callsAtClose);
     }),
   );

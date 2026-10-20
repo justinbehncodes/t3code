@@ -3429,7 +3429,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
   );
 });
 
-it.live("keeps claiming new work after repeated idle periods", () =>
+it.effect("keeps claiming new work after repeated idle periods", () =>
   Effect.gen(function* () {
     const outbox = yield* EffectOutbox.EffectOutboxV2;
     const completed = new Map<string, Deferred.Deferred<void>>();
@@ -3451,9 +3451,13 @@ it.live("keeps claiming new work after repeated idle periods", () =>
     );
 
     yield* Effect.gen(function* () {
-      yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
+      yield* EffectWorker.runDaemonWithOptions({
+        concurrency: 2,
+        livenessPollIntervalMs: 100,
+      }).pipe(Effect.forkScoped);
       for (let wave = 1; wave <= 6; wave += 1) {
-        yield* Effect.sleep("125 millis");
+        // Each wave first lets the idle liveness timer fire, so the daemon re-enters its idle wait.
+        yield* TestClock.adjust("125 millis");
         const effectId = `effect:foundation-idle-wave:${wave}`;
         const completion = yield* Deferred.make<void>();
         completed.set(effectId, completion);
@@ -3466,8 +3470,7 @@ it.live("keeps claiming new work after repeated idle periods", () =>
           },
         ]);
         yield* outbox.notifyAvailable();
-        const observed = yield* Deferred.await(completion).pipe(Effect.timeoutOption("2 seconds"));
-        assert.isTrue(Option.isSome(observed), `worker stopped before idle wave ${wave}`);
+        yield* Deferred.await(completion);
       }
     }).pipe(Effect.provide(layerWorker), Effect.scoped);
   }).pipe(Effect.provide(layerTest)),

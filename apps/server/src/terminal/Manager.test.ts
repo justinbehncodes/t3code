@@ -1374,6 +1374,7 @@ it.layer(
     Effect.gen(function* () {
       let checks = 0;
       const { manager } = yield* createManager(5, {
+        processKillGraceMs: 0,
         subprocessInspector: () => {
           checks += 1;
           return Effect.succeed({
@@ -1385,15 +1386,13 @@ it.layer(
         subprocessPollIntervalMs: 20,
       });
 
-      yield* Effect.sleep("80 millis");
+      yield* TestClock.adjust("80 millis");
       assert.equal(checks, 0);
 
       yield* manager.open(openInput());
-      yield* waitFor(
-        Effect.sync(() => checks > 0),
-        "1200 millis",
-      );
-    }),
+      yield* TestClock.adjust("20 millis");
+      assert.isAbove(checks, 0);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("derives subprocess activity for every terminal from one shared process snapshot", () =>
@@ -2422,7 +2421,10 @@ it.layer(
         ),
       );
       first.emitExit({ exitCode: 0, signal: 0 });
-      yield* Effect.sleep(Duration.millis(5));
+      // Equal exit timestamps tie-break on thread id, so ordering the exits is enough.
+      yield* waitFor(
+        Effect.map(getEvents, (events) => events.some((event) => event.type === "exited")),
+      );
       second.emitExit({ exitCode: 0, signal: 0 });
 
       yield* waitFor(

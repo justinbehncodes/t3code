@@ -7,6 +7,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -82,6 +83,32 @@ interface RestartAdapterState {
   readonly closedSessionCount: number;
   readonly failedReplacementOpen: boolean;
 }
+
+const awaitProjection = Effect.fn("SelectionRestartTest.awaitProjection")(function* (
+  threadId: ThreadId,
+  predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
+) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const afterSequence = yield* eventSink.latestSequence();
+  const current = yield* orchestrator.getThreadProjection(threadId);
+  if (predicate(current)) {
+    return current;
+  }
+  // Projections commit with their events, so each later event is the only time to re-read.
+  const [matched] = yield* eventSink.stream({ afterSequence }).pipe(
+    Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+    Stream.filter(predicate),
+    Stream.take(1),
+    Stream.runCollect,
+  );
+  if (matched === undefined) {
+    return yield* Effect.die(
+      new Error(`Event stream ended before projection ${threadId} matched.`),
+    );
+  }
+  return matched;
+});
 
 function makeRestartAdapter(
   state: Ref.Ref<RestartAdapterState>,
@@ -755,16 +782,11 @@ it.live("detaches the old provider session after an active provider handoff", ()
           modelSelection: initialSelection,
           dispatchMode: { type: "start_immediately" },
         });
-        let activeRunId: RunId | null = null;
-        for (let index = 0; index < 1_000; index += 1) {
-          const current = yield* orchestrator.getThreadProjection(threadId);
-          if (current.providerTurns.some((turn) => turn.status === "running")) {
-            activeRunId = current.runs[0]?.id ?? null;
-            break;
-          }
-          yield* Effect.sleep("5 millis");
-        }
-        if (activeRunId === null) {
+        const active = yield* awaitProjection(threadId, (current) =>
+          current.providerTurns.some((turn) => turn.status === "running"),
+        );
+        const activeRunId = active.runs[0]?.id;
+        if (activeRunId === undefined) {
           return yield* Effect.die("active provider-handoff run is missing");
         }
 
@@ -780,30 +802,11 @@ it.live("detaches the old provider session after an active provider handoff", ()
           modelSelection: handoffSelection,
           dispatchMode: { type: "restart_active", targetRunId: activeRunId },
         });
-        for (let index = 0; index < 1_000; index += 1) {
-          const current = yield* orchestrator.getThreadProjection(threadId);
-          if (current.attempts.length === 2 && current.attempts[1]?.status === "completed") {
-            const captured = yield* Ref.get(state);
-            return { projection: current, captured };
-          }
-          yield* Effect.sleep("5 millis");
-        }
-        const current = yield* orchestrator.getThreadProjection(threadId);
-        const adapterState = yield* Ref.get(state);
-        const capturedTargetStartCount = yield* Ref.get(targetStartCount);
-        yield* Effect.logError("active provider handoff did not complete", {
-          runs: current.runs.map((run) => [run.status, run.activeAttemptId]),
-          attempts: current.attempts.map((attempt) => [attempt.id, attempt.status]),
-          providerTurns: current.providerTurns.map((turn) => [turn.id, turn.status]),
-          providerThreads: current.providerThreads.map((thread) => [
-            thread.providerInstanceId,
-            thread.providerSessionId,
-            thread.status,
-          ]),
-          targetStartCount: capturedTargetStartCount,
-          adapterState,
-        });
-        return yield* Effect.die("active provider handoff did not complete");
+        const projection = yield* awaitProjection(
+          threadId,
+          (current) => current.attempts.length === 2 && current.attempts[1]?.status === "completed",
+        );
+        return { projection, captured: yield* Ref.get(state) };
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(

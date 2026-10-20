@@ -141,6 +141,7 @@ const waitForIdle = Effect.fn("CursorOrchestratorV2Live.waitForIdle")(function* 
     ) {
       return projection;
     }
+    // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- live provider probe polls a real CLI's projection; gated behind its env var
     yield* Effect.sleep("500 millis");
   }
   return yield* Effect.die(new Error(`Timed out waiting for Cursor thread ${threadId}.`));

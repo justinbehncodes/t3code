@@ -7,7 +7,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
+import * as Queue from "effect/Queue";
+import * as Tracer from "effect/Tracer";
 import {
   ProjectId,
   GitCommandError,
@@ -224,18 +225,33 @@ const layerBase = Layer.mergeAll(
 
 type Repositories = Effect.Success<typeof makeRepositories>;
 
-const awaitRunFailure = (
-  service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
-  input: PullRequestRef,
-) =>
-  service.get(input).pipe(
-    Effect.flatMap((result) =>
-      result.run?._tag === "Failed"
-        ? Effect.succeed(result.run.detail)
-        : Effect.fail("still running" as const),
-    ),
-    Effect.retry(Schedule.spaced("20 millis")),
-  );
+// A run forks into the service's scope, so a test learns it settled when the run's `write` span
+// ends; the run records its outcome synchronously right after.
+const watchRuns = Effect.gen(function* () {
+  const ended = yield* Queue.unbounded<void>();
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      if (options.name !== "PullRequestReviewGuideService.write") return span;
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        Queue.offerUnsafe(ended, undefined);
+      };
+      return span;
+    },
+  });
+  return {
+    generate: (
+      service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
+      input: PullRequestRef,
+    ) => service.generate(input).pipe(Effect.withTracer(tracer)),
+    settled: (
+      service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
+      input: PullRequestRef,
+    ) => Queue.take(ended).pipe(Effect.andThen(service.get(input))),
+  };
+});
 
 const startSingleBranchRun = (input: {
   readonly repositoryName: string;
@@ -331,7 +347,8 @@ const startSingleBranchRun = (input: {
       PullRequestReviewGuideService.PullRequestReviewGuideService,
     );
     const guideReference = { ...reference, repository: `acme/${input.repositoryName}` };
-    yield* service.generate(guideReference);
+    const runs = yield* watchRuns;
+    yield* runs.generate(service, guideReference);
     return {
       repositories,
       reportedHead,
@@ -340,10 +357,10 @@ const startSingleBranchRun = (input: {
       stored,
       fetchedRefs,
       observed,
+      settled: runs.settled(service, guideReference),
     };
   });
 
-// Runs drive real git, which the test clock does not advance, so waits use real time.
 it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideService", (it) => {
   it.effect.each([
     {
@@ -450,14 +467,9 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                 }
               : undefined,
           });
-          yield* Effect.raceFirst(
-            Deferred.await(run.stored),
-            awaitRunFailure(run.service, run.reference).pipe(
-              Effect.flatMap((detail) => Effect.die(`run failed: ${detail}`)),
-            ),
-          );
+          const result = yield* run.settled;
+          if (result.run?._tag === "Failed") assert.fail(`run failed: ${result.run.detail}`);
           const { headSha } = run.repositories;
-          const result = yield* run.service.get(run.reference);
           assert.strictEqual(result.guide?.headSha, run.reportedHead);
           assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
           assert.deepStrictEqual(run.observed, [
@@ -529,10 +541,10 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
               Effect.asVoid,
             ),
         });
-        const detail = yield* Effect.raceFirst(
-          awaitRunFailure(run.service, run.reference),
-          Deferred.await(run.stored).pipe(Effect.andThen(Effect.die("a guide was written"))),
-        );
+        const result = yield* run.settled;
+        assert.isFalse(yield* Deferred.isDone(run.stored), "a guide was written");
+        assert.strictEqual(result.run?._tag, "Failed");
+        const detail = result.run?._tag === "Failed" ? result.run.detail : "";
         for (const part of expected) assert.include(detail, part);
         assert.deepStrictEqual(run.observed, []);
         assert.isFalse(run.fetchedRefs.some((ref) => ref.startsWith("-")));
@@ -607,20 +619,20 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
 
-        const started = yield* service.generate(reference);
+        const runs = yield* watchRuns;
+        const started = yield* runs.generate(service, reference);
         assert.strictEqual(started.run?._tag, "Running");
         assert.strictEqual(started.guide, null);
         assert.isTrue(started.started);
 
-        const failedRun = service.get(reference).pipe(
-          Effect.flatMap((result) =>
-            result.run?._tag === "Failed"
-              ? Effect.die(`run failed: ${result.run.detail}`)
-              : Effect.fail("still running" as const),
-          ),
-          Effect.retry(Schedule.spaced("20 millis")),
-        );
-        const observed = yield* Effect.raceFirst(Deferred.await(seen), failedRun);
+        const endedEarly = runs
+          .settled(service, reference)
+          .pipe(
+            Effect.flatMap((result) =>
+              Effect.die(`run ended early: ${JSON.stringify(result.run)}`),
+            ),
+          );
+        const observed = yield* Effect.raceFirst(Deferred.await(seen), endedEarly);
         assert.strictEqual(observed.head, repositories.headSha);
         assert.strictEqual(observed.changed, "feature.txt");
         assert.strictEqual(observed.input.baseBranch, "stack-base");
@@ -637,8 +649,8 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         assert.isFalse(joined.started);
 
         yield* Deferred.succeed(finish, undefined);
-        yield* Deferred.await(stored);
-        const finished = yield* service.get(reference);
+        const finished = yield* runs.settled(service, reference);
+        assert.isTrue(yield* Deferred.isDone(stored));
         assert.strictEqual(finished.guide?.headSha, repositories.headSha);
         const guide = finished.guide;
         assert.isNotNull(guide);
@@ -827,41 +839,27 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             PullRequestReviewGuideService.PullRequestReviewGuideService,
           );
 
-          yield* service.generate(reference);
-          const firstFailed = service.get(reference).pipe(
-            Effect.flatMap((result) =>
-              result.run?._tag === "Failed"
-                ? Effect.die(`first run failed: ${result.run.detail}`)
-                : Effect.fail("still running" as const),
-            ),
-            Effect.retry(Schedule.spaced("20 millis")),
-          );
-          yield* Effect.raceFirst(Deferred.await(oldStarted), firstFailed);
+          const runs = yield* watchRuns;
+          yield* runs.generate(service, reference);
+          const firstEnded = runs
+            .settled(service, reference)
+            .pipe(
+              Effect.flatMap((result) =>
+                Effect.die(`first run ended early: ${JSON.stringify(result.run)}`),
+              ),
+            );
+          yield* Effect.raceFirst(Deferred.await(oldStarted), firstEnded);
           yield* Ref.set(currentHead, repositories.upperSha);
-          const second = yield* service.generate(reference);
+          const second = yield* runs.generate(service, reference);
           assert.strictEqual(second.run?._tag, "Running");
           assert.strictEqual(second.run?.headSha, repositories.upperSha);
-          const failedRun = service.get(reference).pipe(
-            Effect.flatMap((result) =>
-              result.run?._tag === "Failed"
-                ? Effect.die(`run failed: ${result.run.detail}`)
-                : Effect.fail("still running" as const),
-            ),
-            Effect.retry(Schedule.spaced("20 millis")),
-          );
-          yield* Effect.raceFirst(Deferred.await(stored), failedRun);
+          // The old run is parked on releaseOld, so the first run to settle is the newer one.
+          const settled = yield* runs.settled(service, reference);
+          assert.isNull(settled.run);
+          assert.strictEqual(settled.guide?.headSha, repositories.upperSha);
 
           yield* Deferred.succeed(releaseOld, undefined);
-          const settled = yield* service.get(reference).pipe(
-            Effect.filterOrFail(
-              (result) => result.run === null,
-              () => "still running" as const,
-            ),
-            Effect.retry({ schedule: Schedule.spaced("20 millis"), times: 250 }),
-          );
-          assert.strictEqual(settled.guide?.headSha, repositories.upperSha);
-          yield* Effect.sleep("200 millis");
-          const after = yield* service.get(reference);
+          const after = yield* runs.settled(service, reference);
           assert.isNull(after.run);
           assert.strictEqual(after.guide?.headSha, repositories.upperSha);
           assert.strictEqual(after.guide?.stops[0]?.title, "new head");

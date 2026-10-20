@@ -2315,6 +2315,9 @@ it("waits for every display's prepared compositor frame before starting any flig
     const landing = transition.waitForLanding("capture-1");
     await readingFrames.promise;
     frames[0]!.resolve();
+    // Nothing marks "still waiting for the other display", so one macrotask drains the
+    // microtasks a flight started by the first frame alone would need.
+    // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- setImmediate drains microtasks with no delay
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     for (const window of flashWindows) {
@@ -2386,7 +2389,15 @@ it("keeps flying on the destination display when the capture display fails", asy
       { x: 100, y: 50, width: 1_000, height: 700 },
     );
     transitionScriptState.rejectFlight = true;
-    transitionScriptState.heldFlights = [];
+    const flying = Promise.withResolvers<void>();
+    const heldFlights: Array<() => void> = [];
+    const push = heldFlights.push.bind(heldFlights);
+    vi.spyOn(heldFlights, "push").mockImplementation((...resolvers) => {
+      const count = push(...resolvers);
+      flying.resolve();
+      return count;
+    });
+    transitionScriptState.heldFlights = heldFlights;
     transition.animateTo("capture-1", {
       frame: { x: 600, y: 400, width: 208, height: 112 },
       backgroundColor: "#fff",
@@ -2400,7 +2411,7 @@ it("keeps flying on the destination display when the capture display fails", asy
     const landing = transition.waitForLanding("capture-1").then(() => {
       landed = true;
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await flying.promise;
 
     assert.lengthOf(transitionScriptState.heldFlights, 1);
     assert.isFalse(landed);

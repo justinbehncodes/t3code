@@ -128,6 +128,9 @@ describe("getLocalVoiceTranscriber", () => {
 
       await enteredNative.promise;
       controller.abort();
+      // The transcriber checks the signal only after native work returns, so abort has no
+      // milestone to await; one macrotask drains every microtask a premature settle would need.
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- setImmediate drains microtasks with no delay
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).not.toHaveBeenCalled();
       finishNative.resolve();

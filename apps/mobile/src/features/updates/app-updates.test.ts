@@ -295,8 +295,8 @@ describe("runAppUpdateCheck", () => {
 
     backgroundCallbacks[0]!();
     await vi.waitFor(() => expect(flushPendingWrites).toHaveBeenCalledOnce());
+    // The prompt decides synchronously whether to ask, so the check needs no wait.
     foregroundStayCallbacks[0]!();
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(environment.confirmInstallNow).not.toHaveBeenCalled();
 
     releaseFlush();

@@ -226,6 +226,7 @@ const waitFor = Effect.fn("OpenCode2Live.waitFor")(function* (
   for (let attempt = 0; attempt < STEP_WAIT_SECONDS * 2; attempt += 1) {
     const projection = yield* orchestrator.getThreadProjection(threadId);
     if (done(projection)) return projection;
+    // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- live provider probe polls a real CLI's projection; gated behind its env var
     yield* Effect.sleep("500 millis");
   }
   const last = yield* orchestrator.getThreadProjection(threadId);
@@ -659,6 +660,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
             projection.subagents[0] !== undefined &&
             projection.subagents[0].status !== "running",
         );
+        // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- live provider probe gives a real CLI time to emit a late run; gated behind its env var
         yield* Effect.sleep("5 seconds");
         const final = yield* orchestrator.getThreadProjection(stopThread);
         assert.lengthOf(final.runs, 1);

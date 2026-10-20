@@ -285,19 +285,23 @@ function processExists(pid: number): boolean {
   }
 }
 
-const waitForProcesses = (pids: ReadonlyArray<number>) =>
+// Detached grandchildren are not our children, so neither their exit nor the PID file their
+// launcher writes raises an event this process can await; the OS has to be asked again.
+const pollHostState = <A, E, R>(probe: Effect.Effect<Option.Option<A>, E, R>) =>
   Effect.gen(function* () {
-    while (!pids.every(processExists)) {
+    while (true) {
+      const result = yield* probe;
+      if (Option.isSome(result)) return result.value;
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- host PID liveness and fixture PID files have no awaitable signal
       yield* Effect.sleep("10 millis");
     }
   }).pipe(Effect.timeoutOption("2 seconds"));
 
+const waitForProcesses = (pids: ReadonlyArray<number>) =>
+  pollHostState(Effect.sync(() => (pids.every(processExists) ? Option.some(true) : Option.none())));
+
 const waitForProcessesToExit = (pids: ReadonlyArray<number>) =>
-  Effect.gen(function* () {
-    while (pids.some(processExists)) {
-      yield* Effect.sleep("10 millis");
-    }
-  }).pipe(Effect.timeoutOption("2 seconds"));
+  pollHostState(Effect.sync(() => (pids.some(processExists) ? Option.none() : Option.some(true))));
 
 function linuxProcessStart(pid: number): string | undefined {
   try {
@@ -363,19 +367,16 @@ const waitForPublishedProcessIds = (
   path: string,
   count: number,
 ) =>
-  Effect.gen(function* () {
-    while (true) {
-      const ids = (yield* fileSystem.readFileString(path))
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .map(Number);
-      if (ids.length === count && ids.every((pid) => Number.isSafeInteger(pid) && pid > 1)) {
-        return ids;
-      }
-      yield* Effect.sleep("10 millis");
-    }
-  }).pipe(Effect.timeoutOption("2 seconds"));
+  pollHostState(
+    fileSystem.readFileString(path).pipe(
+      Effect.map((contents) => {
+        const ids = contents.trim().split(/\s+/).filter(Boolean).map(Number);
+        return ids.length === count && ids.every((pid) => Number.isSafeInteger(pid) && pid > 1)
+          ? Option.some(ids)
+          : Option.none();
+      }),
+    ),
+  );
 
 function makeMockRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -5146,6 +5147,7 @@ describe("AcpAdapterV2", () => {
       );
       const responseEnqueued = yield* Deferred.make<void>();
       const releaseNativeHook = yield* Deferred.make<void>();
+      const lateNoop = yield* Deferred.make<void>();
       const responseLifecycle: Array<string> = [];
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test-pending-response-timeout");
@@ -5186,7 +5188,11 @@ describe("AcpAdapterV2", () => {
           onNativeResponseLifecycle: (event) =>
             Effect.sync(() => {
               responseLifecycle.push(event.type);
-            }),
+            }).pipe(
+              Effect.andThen(
+                event.type === "late_noop" ? Deferred.succeed(lateNoop, undefined) : Effect.void,
+              ),
+            ),
         },
       });
       const threadId = ThreadId.make("thread-acp-pending-response-timeout");
@@ -5263,7 +5269,7 @@ describe("AcpAdapterV2", () => {
         requestRuntimeRestart: true,
       });
       assert.isTrue(yield* Deferred.isDone(releaseNativeHook));
-      yield* Effect.sleep("50 millis");
+      yield* Deferred.await(lateNoop);
       assert.include(responseLifecycle, "late_noop");
       yield* Scope.close(sessionScope, Exit.void);
       assert.notInclude(yield* pollProtocolMethods(protocolEvents), "session/close");
@@ -5280,6 +5286,7 @@ describe("AcpAdapterV2", () => {
       );
       const responseEnqueued = yield* Deferred.make<void>();
       const releaseNativeHook = yield* Deferred.make<void>();
+      const acknowledgementTimerStarted = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test-pending-response-cancel");
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -5313,6 +5320,12 @@ describe("AcpAdapterV2", () => {
           }),
         },
         selfInvocation,
+        testHooks: {
+          onNativeResponseLifecycle: (event) =>
+            event.type === "timer_started"
+              ? Deferred.succeed(acknowledgementTimerStarted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        },
       });
       const threadId = ThreadId.make("thread-acp-pending-response-cancel");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -5368,7 +5381,10 @@ describe("AcpAdapterV2", () => {
           requestRuntimeRestart: true,
         })
         .pipe(Effect.forkScoped);
-      yield* Effect.sleep("100 millis");
+      // The acknowledgement bound is a 2 second timer; once it is armed, both callers must
+      // still be waiting on it.
+      yield* Deferred.await(acknowledgementTimerStarted);
+      yield* Effect.yieldNow;
       assert.isUndefined(cancellationFiber.pollUnsafe());
       assert.isUndefined(interruptFiber.pollUnsafe());
       assert.isFalse(yield* Deferred.isDone(releaseNativeHook));
@@ -8824,6 +8840,7 @@ describe("AcpAdapterV2", () => {
           [];
         const instanceId = ProviderInstanceId.make("acp-test");
         let cancelCalled = false;
+        const appliedTaskStatuses = yield* Queue.unbounded<string>();
         let runtimeOrdinalSeen = 0;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
@@ -8835,7 +8852,11 @@ describe("AcpAdapterV2", () => {
             terminateRuntimeProcessGroupOnInterrupt: true,
             preserveRuntimeOnSettledInterrupt: true,
             registerExtensions: ({ runtime: extensionRuntime, applyBackgroundTaskMutation }) =>
-              registerXAiBackgroundTaskTracking(extensionRuntime, applyBackgroundTaskMutation),
+              registerXAiBackgroundTaskTracking(extensionRuntime, (mutation) =>
+                applyBackgroundTaskMutation(mutation).pipe(
+                  Effect.andThen(Queue.offer(appliedTaskStatuses, mutation.status)),
+                ),
+              ),
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
@@ -8925,15 +8946,9 @@ describe("AcpAdapterV2", () => {
           }
         }
         assert.equal(firstTerminalStatus, "interrupted");
-        let backgroundTracked = false;
-        for (let attempt = 0; attempt < 80 && !backgroundTracked; attempt += 1) {
-          backgroundTracked = yield* hasPendingBackgroundWork;
-          if (!backgroundTracked) {
-            yield* Effect.sleep("25 millis");
-          }
-        }
+        assert.equal(yield* Queue.take(appliedTaskStatuses), "running");
         assert.isTrue(
-          backgroundTracked,
+          yield* hasPendingBackgroundWork,
           "cancel-backgrounded task must be tracked as running background work",
         );
 
@@ -8966,15 +8981,9 @@ describe("AcpAdapterV2", () => {
           "soft mid-prompt interrupt must not respawn the ACP runtime process",
         );
 
-        let backgroundPending = true;
-        for (let attempt = 0; attempt < 50 && backgroundPending; attempt += 1) {
-          backgroundPending = yield* hasPendingBackgroundWork;
-          if (backgroundPending) {
-            yield* Effect.sleep("100 millis");
-          }
-        }
+        assert.equal(yield* Queue.take(appliedTaskStatuses), "completed");
         assert.isFalse(
-          backgroundPending,
+          yield* hasPendingBackgroundWork,
           "tracked background task must clear after _x.ai/task_completed",
         );
         assert.lengthOf(
@@ -13623,6 +13632,7 @@ describe("AcpAdapterV2", () => {
       const handlerRecords: HandlerRecord[] = [];
       const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
       const oldPromptCompletion = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const oldPromptReturned = yield* Deferred.make<void>();
       const transportDrained = yield* Deferred.make<void>();
       const releaseTransportDrain = yield* Deferred.make<void>();
       let extensionOrdinal = 0;
@@ -13661,7 +13671,9 @@ describe("AcpAdapterV2", () => {
                   prompt: (payload) =>
                     Effect.gen(function* () {
                       yield* runtime.prompt(payload).pipe(Effect.ignore, Effect.forkDetach);
-                      return yield* Deferred.await(oldPromptCompletion);
+                      return yield* Deferred.await(oldPromptCompletion).pipe(
+                        Effect.onExit(() => Deferred.succeed(oldPromptReturned, undefined)),
+                      );
                     }),
                 }
               : {}),
@@ -13861,7 +13873,8 @@ describe("AcpAdapterV2", () => {
         },
       ).pipe(Effect.exit, Effect.forkScoped);
       yield* Deferred.succeed(oldPromptCompletion, { stopReason: "end_turn" });
-      yield* Effect.sleep("100 millis");
+      yield* Deferred.await(oldPromptReturned);
+      yield* Effect.yieldNow;
       assert.isTrue(Option.isNone(yield* Queue.poll(adapterEvents)));
       assert.isUndefined(oldPermissionFiber.pollUnsafe());
       assert.isUndefined(oldElicitationFiber.pollUnsafe());
@@ -13875,9 +13888,14 @@ describe("AcpAdapterV2", () => {
           content: { type: "text", text: "live generation 2 assistant" },
         },
       });
+      // The live generation's update orders after anything the stale completion emitted.
       let replacementMessageSeen = false;
       while (!replacementMessageSeen) {
         const event = yield* Queue.take(adapterEvents);
+        assert.isFalse(
+          event.type === "message.updated" && event.message.text.includes("stale generation 1"),
+          "stale generation output must not surface after its prompt completes",
+        );
         replacementMessageSeen =
           event.type === "message.updated" && event.message.text.includes("live generation 2");
       }
@@ -14333,10 +14351,12 @@ describe("AcpAdapterV2", () => {
       );
       assert.isTrue(Option.isSome(interruptCompleted), "hung ACP cancel must not block teardown");
       assert.isFalse(cancelCalled, "hard process-group teardown must skip ACP cancel");
-      yield* Effect.sleep("250 millis");
-      assert.isFalse(processExists(commandLauncherPid!));
-      assert.isFalse(processExists(commandRootPid!));
-      assert.isFalse(processExists(commandSleepPid!));
+      assert.isTrue(
+        Option.isSome(
+          yield* waitForProcessesToExit([commandLauncherPid!, commandRootPid!, commandSleepPid!]),
+        ),
+        "direct Stop must reap the launcher, Bash, and sleep processes",
+      );
 
       let terminalStatus: string | null = null;
       let openToolTerminalStatus: string | null = null;
@@ -14395,9 +14415,6 @@ describe("AcpAdapterV2", () => {
         "late post-Stop assistant text must not attach to the stopped run",
       );
 
-      yield* Effect.sleep("200 millis");
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
       let residual = yield* Queue.poll(events);
       while (Option.isSome(residual)) {
         const event = residual.value;
@@ -14445,10 +14462,17 @@ describe("AcpAdapterV2", () => {
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
       });
+      // Residual stopped-run events can still arrive while the follow-up runs.
       let secondTerminal: string | null = null;
       let stoppedRunTextOnFollowUp = false;
       while (secondTerminal === null) {
         const event = yield* Queue.take(events);
+        if (
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "tool-call-running-1"
+        ) {
+          assert.notEqual(event.turnItem.status, "running");
+        }
         if (
           event.type === "message.updated" &&
           event.message.role === "assistant" &&
@@ -14636,6 +14660,29 @@ describe("AcpAdapterV2", () => {
         Effect.sync(() => cleanupPublishedDetachedFixture(commandPidPath)),
       );
       const instanceId = ProviderInstanceId.make("acp-test");
+      const cancelledRuntimeTerminated = yield* Deferred.make<void>();
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        ownDescendantProcessGroups: true,
+        ownDetachedProcessGroup: true,
+        processGroupTerminationGrace: 0,
+        environment: (runtimeOrdinal) =>
+          runtimeOrdinal === 1
+            ? {
+                T3_ACP_EXIT_ON_CANCEL: "1",
+                T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL: "1",
+                T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG: "1",
+                T3_ACP_RUNNING_COMMAND_PID_PATH: commandPidPath,
+                T3_ACP_RUNNING_COMMAND_SEPARATE_SESSION: "1",
+              }
+            : {},
+        protocolEvents,
+        // The agent exits on cancel; returning only after its transport ends makes the
+        // adapter observe the dead runtime before cancel completes.
+        wrapCancel: (cancel) =>
+          cancel.pipe(Effect.andThen(Deferred.await(cancelledRuntimeTerminated))),
+      });
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
@@ -14645,25 +14692,14 @@ describe("AcpAdapterV2", () => {
           restartRuntimeAfterInterrupt: true,
           restartRuntimeOnEveryInterrupt: true,
           terminateRuntimeProcessGroupOnInterrupt: true,
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner,
-            mockAgentPath,
-            ownDescendantProcessGroups: true,
-            ownDetachedProcessGroup: true,
-            processGroupTerminationGrace: 0,
-            environment: (runtimeOrdinal) =>
-              runtimeOrdinal === 1
-                ? {
-                    T3_ACP_EXIT_ON_CANCEL: "1",
-                    T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL: "1",
-                    T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG: "1",
-                    T3_ACP_RUNNING_COMMAND_PID_PATH: commandPidPath,
-                    T3_ACP_RUNNING_COMMAND_SEPARATE_SESSION: "1",
-                  }
-                : {},
-            protocolEvents,
-            wrapCancel: (cancel) => cancel.pipe(Effect.andThen(Effect.sleep("250 millis"))),
-          }),
+          makeRuntime: (runtimeInput) =>
+            makeRuntime({
+              ...runtimeInput,
+              onTermination: (error) =>
+                Deferred.succeed(cancelledRuntimeTerminated, undefined).pipe(
+                  Effect.andThen(runtimeInput.onTermination(error)),
+                ),
+            }),
         },
         selfInvocation,
       });
@@ -14729,10 +14765,12 @@ describe("AcpAdapterV2", () => {
         })
         .pipe(Effect.forkScoped);
       yield* Fiber.join(interruptFiber);
-      yield* Effect.sleep("250 millis");
-      assert.isFalse(processExists(commandLauncherPid!));
-      assert.isFalse(processExists(commandRootPid!));
-      assert.isFalse(processExists(commandSleepPid!));
+      assert.isTrue(
+        Option.isSome(
+          yield* waitForProcessesToExit([commandLauncherPid!, commandRootPid!, commandSleepPid!]),
+        ),
+        "restart_active must reap the launcher, Bash, and sleep processes",
+      );
 
       let firstTerminal: string | null = null;
       while (firstTerminal === null) {
