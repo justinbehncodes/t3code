@@ -1181,8 +1181,6 @@ describe("ChatMarkdown thread find", () => {
       </div>
     );
   }
-  const frame = () =>
-    act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   // Highlights live in a document-wide registry the rendered tree does not own.
   const clearHighlights = () => ({ [Symbol.dispose]: () => CSS.highlights.clear() });
   const activeHighlights = () =>
@@ -1219,17 +1217,14 @@ describe("ChatMarkdown thread find", () => {
 
     expect(container.textContent).not.toContain("nothing here");
     await show("needle", 0);
-    await frame();
+    await vi.waitFor(() => expect(activeHighlights()).toEqual(["needle"]));
     expect(openStates()).toEqual(["false", "false", "false"]);
     expect(container.textContent).toContain("nothing here");
-    expect(activeHighlights()).toEqual(["needle"]);
     expect(CSS.highlights.get("t3-thread-find")?.size ?? 0).toBe(0);
 
     await show("needle", 1);
-    await frame();
-    await frame();
-    expect(openStates()).toEqual(["false", "true", "true"]);
-    expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
+    await vi.waitFor(() => expect(openStates()).toEqual(["false", "true", "true"]));
+    await vi.waitFor(() => expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1));
   });
 
   it("keeps Mermaid diagrams rendered until find selects a match in their source", async () => {
@@ -1245,12 +1240,9 @@ describe("ChatMarkdown thread find", () => {
     const diagrams = () => container.querySelectorAll('svg[aria-label="Diagram"]').length;
 
     await using screen = await render(probe("Needle"), { container });
-    await frame();
-    expect(diagrams()).toBe(2);
+    await vi.waitFor(() => expect(diagrams()).toBe(2));
     await screen.rerender(probe("Alpha"));
-    await frame();
-    await frame();
-    expect(diagrams()).toBe(1);
+    await vi.waitFor(() => expect(diagrams()).toBe(1));
     await vi.waitFor(() => expect(activeHighlights()).toEqual(["Alpha"]));
   });
 
@@ -1305,7 +1297,6 @@ describe("ChatMarkdown thread find", () => {
         </FindProbe>,
         { container },
       );
-      await frame();
       // Lazy blocks such as Mermaid can swap their source text after the first frame,
       // emptying a range for a moment, so wait for the highlights to settle.
       await vi.waitFor(() => {

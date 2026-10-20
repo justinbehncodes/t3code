@@ -79,18 +79,14 @@ async function renderOpening(script: string, query = "") {
       <Find container={container} query={query} />
     </AppAtomRegistryProvider>
   );
-  const nextFrame = () =>
-    act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   await using stack = new AsyncDisposableStack();
   stack.defer(() => CSS.highlights.clear());
   const screen = stack.use(await render(block(script, query), { container }));
-  await nextFrame();
   const environment = stack.move();
   return {
     container,
     rerender: async (script: string, query: string) => {
       await screen.rerender(block(script, query));
-      await nextFrame();
     },
     [Symbol.asyncDispose]: () => environment.disposeAsync(),
   };
@@ -115,7 +111,9 @@ it("shows a short script as highlighted code with nothing to open", async () => 
 
 it("folds a long script until it is opened", async () => {
   await using screen = await renderOpening(LONG_SCRIPT);
-  expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("false");
+  await vi.waitFor(() =>
+    expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("false"),
+  );
   expect(screen.container.querySelector("[data-thread-find-fold]")).not.toBeNull();
   await act(() => foldToggle(screen.container)?.click());
   expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("true");
@@ -124,10 +122,12 @@ it("folds a long script until it is opened", async () => {
 
 it("finds the workflow's name and opens a folded script on a match below the fold", async () => {
   await using screen = await renderOpening(LONG_SCRIPT, "repo-check");
-  expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
+  await vi.waitFor(() => expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1));
   expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("false");
 
   await screen.rerender(LONG_SCRIPT, "TAILONLY");
-  expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
-  expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("true");
+  await vi.waitFor(() =>
+    expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("true"),
+  );
+  await vi.waitFor(() => expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1));
 });

@@ -164,7 +164,6 @@ async function scrollToStart(container: HTMLElement) {
   await act(async () => {
     viewport(container).scrollTop = 0;
     viewport(container).dispatchEvent(new Event("scroll"));
-    await new Promise(requestAnimationFrame);
   });
 }
 async function selectTreeFile(container: HTMLElement, path: string) {

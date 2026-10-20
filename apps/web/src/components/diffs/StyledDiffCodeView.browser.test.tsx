@@ -171,7 +171,7 @@ describe("code-view worker lifecycle", () => {
   }
   // Worker startup runs on real time, so only the idle expiry checks use this clock.
   // Faking startup too would let advancing the idle clock time out a worker startup.
-  const idleClock = () => fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const idleClock = () => fakeTimers();
   async function workerEnvironment({ startupLimit = UNLIMITED_WORKER_STARTUP_MS } = {}) {
     await using stack = new AsyncDisposableStack();
     // Pins the pool at two workers whatever machine runs the suite.

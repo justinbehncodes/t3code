@@ -1590,6 +1590,9 @@ describe("MessagesTimeline scroll position", () => {
     await userEvent.wheel(viewport, { delta: { y: -2000 } });
     await click(toggle());
     await click(toggle());
+    // The restore decision runs in the timeline's second disclosure-settle frame and leaves no
+    // DOM trace when it declines, so this negative check has to outlast those two frames.
+    // oxlint-disable-next-line t3code/no-frame-waits-in-browser-tests -- negative check needs the settle frames to have run
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     expect(composerState()).toBe("collapsed");
   });
@@ -1614,14 +1617,14 @@ describe("MessagesTimeline send anchor", () => {
 
   it("does not anchor a follow-up user message that is not the newest turn", async () => {
     const onAnchorReady = vi.fn();
-    await using _screen = await renderTimeline(
+    await using screen = await renderTimeline(
       [message("First prompt."), message("Newest prompt.", {}, "message-2")],
       {
         anchorMessageId: MessageId.make("message-2"),
         onAnchorReady,
       },
     );
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("Newest prompt."));
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 });

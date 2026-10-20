@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
@@ -12,9 +12,6 @@ function sized(width: number) {
   return container;
 }
 
-const nextFrame = () =>
-  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))));
-
 const usage = (description: string) => (
   <ComposerBannerStack
     items={[{ id: "usage", variant: "info", icon: null, title: "Usage limits", description }]}
@@ -25,25 +22,20 @@ it("only offers notice details when the description cannot fit", async () => {
   await using screen = await render(usage("OpenCode"), { container: sized(700) });
   const { container } = screen;
   const hasDetails = () => container.querySelector('[aria-label="Show notice details"]') !== null;
-  await nextFrame();
-  expect(hasDetails()).toBe(false);
+  await vi.waitFor(() => expect(hasDetails()).toBe(false));
 
   await screen.rerender(usage("OpenCode ".repeat(40)));
-  await nextFrame();
-  expect(hasDetails()).toBe(true);
+  await vi.waitFor(() => expect(hasDetails()).toBe(true));
 
   container.style.width = "4000px";
-  await nextFrame();
-  expect(hasDetails()).toBe(false);
+  await vi.waitFor(() => expect(hasDetails()).toBe(false));
 
   await screen.rerender(usage("OpenCode"));
-  await nextFrame();
-  expect(hasDetails()).toBe(false);
+  await vi.waitFor(() => expect(hasDetails()).toBe(false));
 
   // A narrow composer hides the description entirely, so details are the only way to read it.
   container.style.width = "300px";
-  await nextFrame();
-  expect(hasDetails()).toBe(true);
+  await vi.waitFor(() => expect(hasDetails()).toBe(true));
 });
 
 it("keeps only the usage limit attached while an active goal waits in the collapsible stack", async () => {

@@ -66,8 +66,6 @@ function setup() {
   return stack.move();
 }
 
-const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
 describe("find result navigation", () => {
   it("retargets a pending first jump when progressive history moves the matching row", async () => {
     using _environment = setup();
@@ -99,9 +97,10 @@ describe("find result navigation", () => {
         '<div data-timeline-row-id="message"><p data-thread-find-text>COD4</p></div>';
       rect = new DOMRect(0, 450, 40, 20);
       second();
-      await nextFrame();
     });
-    expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false });
+    await vi.waitFor(() =>
+      expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false }),
+    );
   });
 
   it("keeps the highlighted text at the same position when progressive activity arrives", async () => {
@@ -165,9 +164,10 @@ describe("find result navigation", () => {
     rect = new DOMRect(0, 450, 40, 20);
     await act(async () => {
       complete();
-      await nextFrame();
     });
-    expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false });
+    await vi.waitFor(() =>
+      expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false }),
+    );
     expect(renders).toHaveBeenCalledTimes(1);
   });
 
@@ -202,9 +202,10 @@ describe("find result navigation", () => {
     expect(scrollToOffset).not.toHaveBeenCalled();
     await act(async () => {
       second();
-      await nextFrame();
     });
-    expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false });
+    await vi.waitFor(() =>
+      expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false }),
+    );
   });
 
   it("loads history until a distant match can be revealed in the conversation", async () => {
@@ -334,16 +335,13 @@ describe("find result navigation", () => {
         match={{ entryId: "message", runId: null, occurrence: 1 }}
       />,
     );
-    await act(async () => {
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
-    });
+    await vi.waitFor(() =>
+      expect(scrollToOffset.mock.calls).toEqual([
+        [{ offset: 366, animated: false }],
+        [{ offset: 432, animated: false }],
+      ]),
+    );
     expect(rect.top).toBe(200);
-    expect(scrollToOffset.mock.calls).toEqual([
-      [{ offset: 366, animated: false }],
-      [{ offset: 432, animated: false }],
-    ]);
     expect(renders).toHaveBeenCalledTimes(2);
   });
 
@@ -354,9 +352,10 @@ describe("find result navigation", () => {
       rect = new DOMRect(0, 450, 40, 20);
     });
     await using _screen = await render(<Probe {...props} />);
-    await act(nextFrame);
+    await vi.waitFor(() =>
+      expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false }),
+    );
     expect(scrollToIndex).toHaveBeenCalledTimes(1);
-    expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false });
   });
 
   it("materializes a virtualized message before revealing its occurrence", async () => {
@@ -373,9 +372,10 @@ describe("find result navigation", () => {
     await act(async () => {
       container.innerHTML =
         '<div data-timeline-row-id="message"><p data-thread-find-text>COD4</p></div>';
-      await nextFrame();
     });
+    await vi.waitFor(() =>
+      expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false }),
+    );
     expect(scrollToIndex).toHaveBeenCalledTimes(1);
-    expect(scrollToOffset).toHaveBeenCalledExactlyOnceWith({ offset: 366, animated: false });
   });
 });

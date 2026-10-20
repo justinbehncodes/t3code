@@ -64,8 +64,7 @@ function pointer(label: string, type: string, xFraction: number, yFraction = 0.5
   );
 }
 
-const nextFrame = () =>
-  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+const nextFrame = () => act(() => void vi.advanceTimersToNextFrame());
 
 async function renderAccent(value: string | undefined, commitDelayMs?: number) {
   const onCommit = vi.fn();
@@ -173,7 +172,7 @@ describe("provider accent color picker", () => {
   it("debounces commits and commits the pending color on unmount", async () => {
     await using screen = await renderAccent("#ff0000", 250);
     const { onCommit } = screen;
-    using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    using _timers = fakeTimers();
 
     await press(HUE, "ArrowRight", true);
     await press(HUE, "ArrowRight", true);
@@ -193,6 +192,7 @@ describe("theme color field", () => {
   it("batches native range changes into one commit per frame and keeps alpha", async () => {
     await using screen = await renderThemeField("#ff000080");
     const { onChange } = screen;
+    using _timers = fakeTimers();
 
     // Both changes land in one task, so no animation frame can run between them.
     await act(async () => {
@@ -212,6 +212,7 @@ describe("theme color field", () => {
   it("flushes the final drag color on release of the dragging pointer only", async () => {
     await using screen = await renderThemeField("#ff000080");
     const { onChange } = screen;
+    using _timers = fakeTimers();
 
     // The drag runs in one task, so no animation frame can commit mid-drag.
     await act(async () => {

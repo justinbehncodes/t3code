@@ -23,12 +23,14 @@ function buttonWithText(container: HTMLElement, label: string) {
   return button!;
 }
 
-async function scrollTo(element: HTMLElement, top: number) {
+async function scrollTo(element: HTMLElement, top: number, revealedText?: string) {
   await act(async () => {
     element.scrollTop = top;
     element.dispatchEvent(new Event("scroll"));
-    await new Promise(requestAnimationFrame);
   });
+  if (revealedText !== undefined) {
+    await vi.waitFor(() => expect(text(element)).toContain(revealedText));
+  }
 }
 
 describe("ChangedFilesCard", () => {
@@ -145,8 +147,7 @@ describe("ChangedFilesTree", () => {
     expect(text(container)).not.toContain("folder-0999");
 
     const viewport = container.firstElementChild as HTMLElement;
-    await scrollTo(viewport, viewport.scrollHeight);
-    expect(text(container)).toContain("folder-0999");
+    await scrollTo(viewport, viewport.scrollHeight, "folder-0999");
     expect(container.querySelectorAll("button").length).toBeLessThan(60);
     await act(async () => buttonWithText(container, "folder-0999").click());
     expect(text(container)).toContain("index.ts");
@@ -188,13 +189,11 @@ describe("ChangedFilesTree", () => {
     expect(text(container)).toContain("file-00000.ts");
     expect(text(container)).not.toContain("file-08000.ts");
 
-    await scrollTo(viewport, 420 + 8_001 * 28);
-    expect(text(container)).toContain("file-08000.ts");
+    await scrollTo(viewport, 420 + 8_001 * 28, "file-08000.ts");
     expect(text(container)).not.toContain("file-00000.ts");
     expect(container.querySelectorAll("button").length).toBeLessThan(60);
 
-    await scrollTo(viewport, viewport.scrollHeight);
-    expect(text(container)).toContain("file-16184.ts");
+    await scrollTo(viewport, viewport.scrollHeight, "file-16184.ts");
     await act(async () => buttonWithText(container, "file-16184.ts").click());
     expect(onOpenTurnDiff).toHaveBeenCalledWith(RunId.make("run-1"), "src/file-16184.ts");
     await act(async () =>
@@ -235,17 +234,15 @@ describe("ChangedFilesTree", () => {
     );
     const { container } = screen;
     const viewport = container.firstElementChild as HTMLElement;
-    await scrollTo(viewport, 420);
+    await scrollTo(viewport, 420, "src");
     await act(async () => buttonWithText(container, "src").click());
     expect(container.querySelectorAll("button").length).toBeLessThan(60);
 
-    await scrollTo(viewport, 420 + 8_001 * 28);
-    expect(text(container)).toContain("file-08000.ts");
+    await scrollTo(viewport, 420 + 8_001 * 28, "file-08000.ts");
     expect(container.querySelectorAll("button").length).toBeLessThan(60);
 
-    await scrollTo(viewport, viewport.scrollHeight);
-    expect(text(container)).toContain("file-16184.ts");
-    await scrollTo(viewport, 420);
+    await scrollTo(viewport, viewport.scrollHeight, "file-16184.ts");
+    await scrollTo(viewport, 420, "src");
     await act(async () => buttonWithText(container, "src").click());
     expect(text(container)).not.toContain("file-00000.ts");
     expect(container.querySelectorAll("button").length).toBe(1);
@@ -267,8 +264,7 @@ describe("ChangedFilesTree", () => {
     const viewport = container.firstElementChild as HTMLElement;
     const focusedFile = buttonWithText(container, "file-00000.ts");
     await act(async () => focusedFile.focus());
-    await scrollTo(viewport, 8_001 * 28);
-    expect(text(container)).toContain("file-08000.ts");
+    await scrollTo(viewport, 8_001 * 28, "file-08000.ts");
     expect(document.activeElement).toBe(focusedFile);
     expect(container.querySelectorAll("button").length).toBeLessThan(60);
 
@@ -294,7 +290,7 @@ describe("ChangedFilesTree", () => {
     await using screen = await render(content(140, 0));
     const { container } = screen;
     const viewport = container.firstElementChild as HTMLElement;
-    await scrollTo(viewport, 8_001 * 28);
+    await scrollTo(viewport, 8_001 * 28, "file-08000.ts");
     const beforeResize = container.querySelectorAll("button").length;
     await screen.rerender(content(560, 560));
     await expect

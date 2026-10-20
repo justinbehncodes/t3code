@@ -1,6 +1,6 @@
 import { act, render, type Screen } from "../../../test/render";
 import { Dialog } from "@base-ui/react/dialog";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { PanelLayoutControls } from "../chat/PanelLayoutControls";
@@ -47,12 +47,20 @@ async function renderPanel(
       </Dialog.Portal>
     </Dialog.Root>,
   );
-  await act(nextFrame);
+  // The dialog moves initial focus into itself after mounting; later focus moves must not race it.
+  await vi.waitFor(() =>
+    expect(
+      document.querySelector('[aria-label="Workspace"]')?.contains(document.activeElement),
+    ).toBe(true),
+  );
 }
 
-function nextFrame() {
-  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-}
+const expectFocused = (target: Element | string | null) =>
+  vi.waitFor(() =>
+    expect(document.activeElement).toBe(
+      typeof target === "string" ? document.querySelector(target) : target,
+    ),
+  );
 
 // Tabbing past the popup's last control wraps through Base UI's focus guard
 // to the first tabbable descendant, which skips anything inert.
@@ -60,7 +68,6 @@ async function enterFocusScope() {
   const toggle = document.querySelector<HTMLElement>('[aria-label="Toggle right panel"]')!;
   await act(async () => toggle.focus());
   await userEvent.tab();
-  await act(nextFrame);
 }
 
 describe("right panel keyboard access", () => {
@@ -68,17 +75,17 @@ describe("right panel keyboard access", () => {
     await using screen = await render(null);
     await renderPanel(screen, false);
     const outside = document.querySelector<HTMLElement>('[data-testid="outside"]')!;
-    expect(document.activeElement).toBe(outside);
+    await expectFocused(outside);
     await enterFocusScope();
-    expect(document.activeElement).toBe(outside);
+    await expectFocused(outside);
 
     await renderPanel(screen, true);
     await enterFocusScope();
-    expect(document.activeElement).toBe(document.querySelector('[aria-label="Preview URL"]'));
+    await expectFocused('[aria-label="Preview URL"]');
 
     await renderPanel(screen, false);
     await enterFocusScope();
-    expect(document.activeElement).toBe(outside);
+    await expectFocused(outside);
   });
 
   it("returns focus to the right-panel toggle when a focused panel closes", async () => {
@@ -87,12 +94,10 @@ describe("right panel keyboard access", () => {
     const input = document.querySelector<HTMLInputElement>('[aria-label="Preview URL"]')!;
     await act(async () => input.focus());
     await renderPanel(screen, false);
-    expect(document.activeElement).toBe(
-      document.querySelector('[aria-label="Toggle right panel"]'),
-    );
+    await expectFocused('[aria-label="Toggle right panel"]');
     await renderPanel(screen, true);
     await enterFocusScope();
-    expect(document.activeElement).toBe(input);
+    await expectFocused(input);
   });
 
   it("retains focus after the closing animation relocates the toggle", async () => {
@@ -103,11 +108,11 @@ describe("right panel keyboard access", () => {
     });
     await renderPanel(screen, false);
     const closingToggle = document.querySelector('[aria-label="Toggle right panel"]');
-    expect(document.activeElement).toBe(closingToggle);
+    await expectFocused(closingToggle);
     await renderPanel(screen, false, "inline", false);
     const settledToggle = document.querySelector('[aria-label="Toggle right panel"]');
     expect(settledToggle).not.toBe(closingToggle);
-    expect(document.activeElement).toBe(settledToggle);
+    await expectFocused(settledToggle);
   });
 
   it("returns focus when the panel closes without an animation", async () => {
@@ -117,9 +122,7 @@ describe("right panel keyboard access", () => {
       document.querySelector<HTMLInputElement>('[aria-label="Preview URL"]')!.focus();
     });
     await renderPanel(screen, false, "inline", false);
-    expect(document.activeElement).toBe(
-      document.querySelector('[aria-label="Toggle right panel"]'),
-    );
+    await expectFocused('[aria-label="Toggle right panel"]');
   });
 
   it("preserves focus moved outside while the closing animation settles", async () => {
@@ -132,7 +135,7 @@ describe("right panel keyboard access", () => {
     const outside = document.querySelector<HTMLButtonElement>('[data-testid="outside"]')!;
     await act(async () => outside.focus());
     await renderPanel(screen, false, "inline", false);
-    expect(document.activeElement).toBe(outside);
+    await expectFocused(outside);
   });
 
   it("preserves focus outside the panel when it closes", async () => {
@@ -141,7 +144,7 @@ describe("right panel keyboard access", () => {
     const outside = document.querySelector<HTMLButtonElement>('[data-testid="outside"]')!;
     await act(async () => outside.focus());
     await renderPanel(screen, false);
-    expect(document.activeElement).toBe(outside);
+    await expectFocused(outside);
   });
 
   it.each(["sheet", "sidebar", "embedded"] as const)(
@@ -149,13 +152,13 @@ describe("right panel keyboard access", () => {
     async (mode) => {
       await using screen = await render(null);
       await renderPanel(screen, false, mode);
-      expect(document.activeElement).toBe(document.querySelector('[aria-label="Preview URL"]'));
+      await expectFocused('[aria-label="Preview URL"]');
     },
   );
 
   it("keeps non-collapsible inline controls reachable", async () => {
     await using screen = await render(null);
     await renderPanel(screen, undefined);
-    expect(document.activeElement).toBe(document.querySelector('[aria-label="Preview URL"]'));
+    await expectFocused('[aria-label="Preview URL"]');
   });
 });

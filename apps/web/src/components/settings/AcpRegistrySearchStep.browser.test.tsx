@@ -136,7 +136,7 @@ it("shows the full catalog initially and after clearing a debounced search", asy
   expect(addButtons()).toHaveLength(25);
   await expect.element(page.getByRole("button", { name: "Add Gemini CLI 25" })).toBeEnabled();
 
-  using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  using _timers = fakeTimers();
   await userEvent.fill(searchBox(), "  Gemini  ");
   await act(async () => vi.advanceTimersByTime(200));
   await userEvent.fill(searchBox(), "  Gemini CLI  ");
@@ -172,7 +172,7 @@ it("submits a typed query at once and refreshes when the same query is submitted
   setup();
   await using screen = await render(step());
   // A slow runner must not let the typing debounce submit the query before Enter does.
-  using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  using _timers = fakeTimers();
   await userEvent.fill(searchBox(), "Codex");
   await userEvent.keyboard("{Enter}");
   expect(lastQuery()).toBe("Codex");

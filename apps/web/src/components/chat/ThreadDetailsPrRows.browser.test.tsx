@@ -240,6 +240,21 @@ it("lets only watched pull requests stop their watch", async () => {
   });
 });
 
+function nextResize(element: Element): Promise<void> {
+  return new Promise((resolve) => {
+    let initialHeight: number | undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry!.contentRect.height;
+      if (initialHeight === undefined) initialHeight = height;
+      else if (height !== initialHeight) {
+        observer.disconnect();
+        resolve();
+      }
+    });
+    observer.observe(element);
+  });
+}
+
 it("keeps workspace controls after expanding and collapsing 70 linked pull requests", async () => {
   await using test = await setup();
   const { screen, container } = test;
@@ -284,15 +299,19 @@ it("keeps workspace controls after expanding and collapsing 70 linked pull reque
   await expect.element(runContext).toBeVisible();
   await expect.element(editor).toBeVisible();
 
-  await userEvent.click(page.getByRole("button", { name: "Show 69 more" }));
+  const showMore = page.getByRole("button", { name: "Show 69 more" });
+  const content = showMore
+    .element()
+    .closest('[data-slot="scroll-area-viewport"]')!.firstElementChild!;
+  // The card measures this element through the shared ResizeObserver, created before this one,
+  // so this observer seeing the expanded size means the card has measured it too.
+  const expandedSizeDelivered = nextResize(content);
+  await userEvent.click(showMore);
   await expect.element(page.getByRole("button", { name: "Show less" })).toBeInTheDocument();
   const extraRows = () =>
     container.querySelectorAll('[aria-label^="https://github.com/pingdotgg/t3code/pull/"]');
   expect(extraRows()).toHaveLength(69);
-  // Let native ResizeObserver deliver the expanded content size before collapsing it.
-  await act(async () => {
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  });
+  await act(() => expandedSizeDelivered);
   await userEvent.click(page.getByRole("button", { name: "Show less" }));
   await expect.element(page.getByRole("button", { name: "Show 69 more" })).toBeVisible();
   expect(extraRows()).toHaveLength(0);

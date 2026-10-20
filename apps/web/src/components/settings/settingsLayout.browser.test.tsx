@@ -101,20 +101,16 @@ describe("settings search targets", () => {
 
       expect(scrollToSettingsTarget("legacy-sidebar")).toBe(true);
       expect(document.activeElement).toBe(target);
-      const opened = animated
-        ? new Promise<void>((resolve) => {
-            panel.addEventListener("transitionend", () => resolve(), { once: true });
-          })
-        : Promise.resolve();
       panel.style.height = "600px";
       panel.removeAttribute("data-starting-style");
       transition?.finish();
-      await opened;
 
-      const bounds = viewport.getBoundingClientRect();
-      const row = target.getBoundingClientRect();
-      expect(row.top).toBeGreaterThanOrEqual(bounds.top);
-      expect(row.bottom).toBeLessThanOrEqual(bounds.bottom);
+      await vi.waitFor(() => {
+        const bounds = viewport.getBoundingClientRect();
+        const row = target.getBoundingClientRect();
+        expect(row.top).toBeGreaterThanOrEqual(bounds.top);
+        expect(row.bottom).toBeLessThanOrEqual(bounds.bottom);
+      });
       expect(document.activeElement).toBe(target);
     },
   );
@@ -142,11 +138,9 @@ describe("settings search targets", () => {
     scrollToSettingsTarget("legacy-sidebar");
     panel.removeAttribute("data-starting-style");
     scrollToSettingsTarget("new-target");
-    const opened = new Promise<void>((resolve) => {
-      panel.addEventListener("transitionend", () => resolve(), { once: true });
-    });
     transition.finish();
-    await opened;
+    // A re-scroll for the earlier destination would already be queued when this await resumes.
+    await transition.finished;
 
     const viewport = document.getElementById("viewport")!;
     const target = document.getElementById("new-target")!;

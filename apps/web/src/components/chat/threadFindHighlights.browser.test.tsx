@@ -12,11 +12,27 @@ const activeRanges = () => [
   ...(CSS.highlights.get("t3-thread-find-active") as unknown as Set<Range>),
 ];
 
-const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
 function setup() {
   using stack = new DisposableStack();
   stack.use(stubGlobal("CSS", { highlights: new Map() }));
+  // Repaints are coalesced into a frame; tests paint that frame explicitly.
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrameId = 0;
+  stack.use(
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(++nextFrameId, callback);
+      return nextFrameId;
+    }),
+  );
+  stack.use(
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => void frames.delete(id)),
+  );
+  const paint = () =>
+    act(() => {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(performance.now());
+    });
   stack.use(
     stubGlobal(
       "Highlight",
@@ -34,7 +50,12 @@ function setup() {
   document.body.append(container);
   stack.defer(() => container.remove());
   const environment = stack.move();
-  return { container, onActiveRange: vi.fn(), [Symbol.dispose]: () => environment.dispose() };
+  return {
+    container,
+    onActiveRange: vi.fn(),
+    paint,
+    [Symbol.dispose]: () => environment.dispose(),
+  };
 }
 
 describe("find highlight caching", () => {
@@ -92,13 +113,13 @@ describe("find highlight caching", () => {
     onActiveRange.mockClear();
     await act(async () => {
       timer.textContent = "0:01";
-      await nextFrame();
     });
+    await find.paint();
     expect(onActiveRange).not.toHaveBeenCalled();
     await act(async () => {
       container.querySelector("p")!.append(" COD4");
-      await nextFrame();
     });
+    await find.paint();
     expect(onActiveRange).toHaveBeenCalled();
   });
 
@@ -121,7 +142,7 @@ describe("find highlight caching", () => {
         onActiveRange={onActiveRange}
       />,
     );
-    await act(nextFrame);
+    await find.paint();
     expect(folds[0]?.hasAttribute("hidden")).toBe(false);
     expect(folds[1]?.hasAttribute("hidden")).toBe(true);
     expect(activeRanges()[0]?.toString()).toBe("COD4");
@@ -157,7 +178,7 @@ describe("find highlight caching", () => {
         onActiveRange={onActiveRange}
       />,
     );
-    await act(nextFrame);
+    await find.paint();
     expect(activeRanges()[0]?.toString()).toBe("COD4");
   });
 
@@ -177,14 +198,14 @@ describe("find highlight caching", () => {
     await act(async () => {
       row.remove();
       container.append(row);
-      await nextFrame();
     });
+    await find.paint();
     expect(activeRanges()[0]).not.toBe(initial);
     expect(activeRanges()[0]?.toString()).toBe("COD4");
     await act(async () => {
       row.dataset.timelineRowId = "recycled";
-      await nextFrame();
     });
+    await find.paint();
     expect(activeRanges()).toHaveLength(0);
     await screen.rerender(<Probe {...props} activeRowId="recycled" />);
     expect(activeRanges()[0]?.toString()).toBe("COD4");
@@ -212,8 +233,8 @@ describe("find highlight caching", () => {
     await act(async () => {
       container.querySelector('[data-timeline-row-id="second"] p')!.firstChild!.nodeValue =
         "COD4 COD4";
-      await nextFrame();
     });
+    await find.paint();
     expect(createRange).toHaveBeenCalledTimes(5);
     expect(activeRanges()[0]).toBe(initial);
     await screen.rerender(<Probe {...props} activeRowId="second" activeOccurrence={1} />);
@@ -222,8 +243,8 @@ describe("find highlight caching", () => {
     expect(activeRanges()[0]?.startOffset).toBe(5);
     await act(async () => {
       container.querySelector('[data-timeline-row-id="second"]')!.remove();
-      await nextFrame();
     });
+    await find.paint();
     expect(activeRanges()).toHaveLength(0);
     expect(onActiveRange).toHaveBeenLastCalledWith(null);
     expect(CSS.highlights.get("t3-thread-find")?.size).toBe(2);

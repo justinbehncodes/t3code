@@ -98,11 +98,16 @@ async function expectDismissedInPlace(change: () => Promise<void> | void) {
   const before = place(positioner()!);
   await change();
   const seen: number[][] = [];
-  for (let frame = 0; frame < 60 && positioner(); frame += 1) {
-    seen.push(place(positioner()!));
-    await new Promise(requestAnimationFrame);
-  }
-  expect(positioner()).toBeNull();
+  await expect
+    .poll(
+      () => {
+        const node = positioner();
+        if (node) seen.push(place(node));
+        return node;
+      },
+      { interval: 1 },
+    )
+    .toBeNull();
   expect(seen).toEqual(seen.map(() => before));
 }
 
