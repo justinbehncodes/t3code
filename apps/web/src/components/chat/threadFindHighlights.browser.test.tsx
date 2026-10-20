@@ -31,7 +31,8 @@ function setup() {
     act(() => {
       const pending = [...frames.values()];
       frames.clear();
-      for (const callback of pending) callback(performance.now());
+      // The timestamp is unused by the highlight scheduler; a constant keeps the paint deterministic.
+      for (const callback of pending) callback(0);
     });
   stack.use(
     stubGlobal(
