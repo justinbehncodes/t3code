@@ -38,7 +38,7 @@ export function systemBrowserTargetLabel(
 ): string {
   const found = findSystemBrowserTarget(browsers ?? [], target);
   if (found) return `${found.browser.name} · ${found.profile.name}`;
-  const saved = `${target.browserName} · ${target.profileName}`;
+  const saved = `${target.browserName ?? target.browserId} · ${target.profileName ?? target.profileDirectory}`;
   return browsers === null ? saved : `${saved} (not found)`;
 }
 

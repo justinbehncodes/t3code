@@ -20,12 +20,15 @@ export const SystemBrowser = Schema.Struct({
 });
 export type SystemBrowser = typeof SystemBrowser.Type;
 
-/** The names are kept from when the target was picked, to label it once it is no longer detected. */
+/**
+ * The names are kept from when the target was picked, to label it once it is no longer detected.
+ * They are optional so a target saved before they existed still decodes; labels fall back to the ids.
+ */
 export const SystemBrowserTarget = Schema.Struct({
   browserId: Schema.String,
   profileDirectory: Schema.String,
-  browserName: Schema.String,
-  profileName: Schema.String,
+  browserName: Schema.optionalKey(Schema.String),
+  profileName: Schema.optionalKey(Schema.String),
 });
 export type SystemBrowserTarget = typeof SystemBrowserTarget.Type;
 

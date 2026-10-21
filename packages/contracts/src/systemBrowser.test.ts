@@ -102,6 +102,16 @@ describe("system browser targets in client settings", () => {
     expect(settings.browserEnvironmentSystemTargets).toEqual({});
   });
 
+  it("accepts a target saved before the display names existed", () => {
+    const saved = { browserId: "msedge", profileDirectory: "Profile 4" };
+    const settings = decodeClientSettings({ browserSystemTarget: saved });
+    expect(settings.browserSystemTarget).toEqual(saved);
+    expect(
+      decodeClientSettingsPatch({ browserEnvironmentSystemTargets: { [work]: saved } })
+        .browserEnvironmentSystemTargets,
+    ).toEqual({ [work]: saved });
+  });
+
   it.each([
     { browserSystemTarget: { browserId: "msedge" } },
     { browserSystemTarget: "msedge" },

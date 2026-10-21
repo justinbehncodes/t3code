@@ -46,6 +46,14 @@ describe("systemBrowserTargetLabel", () => {
   it("does not flag a saved choice while the first scan is running", () => {
     expect(systemBrowserTargetLabel(null, edgePersonal)).toBe("Microsoft Edge · Personal");
   });
+
+  it("falls back to the ids for a choice saved without display names", () => {
+    const unnamed = { browserId: "msedge", profileDirectory: "Profile 4" };
+    expect(systemBrowserTargetLabel([edge], unnamed)).toBe("msedge · Profile 4 (not found)");
+    expect(systemBrowserTargetLabel([edge], { ...unnamed, profileDirectory: "Profile 3" })).toBe(
+      "Microsoft Edge · Work",
+    );
+  });
 });
 
 describe("systemBrowserTargetOptions", () => {
