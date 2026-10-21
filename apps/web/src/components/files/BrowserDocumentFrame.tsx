@@ -190,7 +190,7 @@ export function HtmlRenderDocument(props: {
   const open = useEffectEvent((url: string, modifiers: { metaKey: boolean; ctrlKey: boolean }) => {
     if (modifiers.metaKey || modifiers.ctrlKey) {
       void readLocalApi()
-        ?.shell.openExternal(url)
+        ?.shell.openExternal(url, { environmentId: props.threadRef?.environmentId })
         .catch((cause: unknown) => console.error(cause));
       return;
     }

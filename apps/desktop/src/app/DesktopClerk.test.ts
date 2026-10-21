@@ -33,7 +33,7 @@ import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as SystemBrowsers from "../browser/SystemBrowsers.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
@@ -52,11 +52,8 @@ const layerDesktopClerk = (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = FileSystem.layerNoop({
     exists: () => Effect.succeed(false),
   }),
-  shell: ElectronShell.ElectronShell["Service"] = {
-    openExternal: () => Effect.succeed(true),
-    openSystemSettings: () => Effect.succeed(false),
-    copyText: () => Effect.void,
-  },
+  openExternal: SystemBrowsers.SystemBrowsers["Service"]["openExternal"] = () =>
+    Effect.succeed(true),
   listeners = new Map<string, (...args: unknown[]) => void>(),
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
@@ -97,10 +94,11 @@ const layerDesktopClerk = (
         NodePath.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
-        Layer.succeed(ElectronShell.ElectronShell, shell),
         fileSystemLayer,
       ),
     ),
+    // `configure` opens sign-in pages through the browser chosen in client settings.
+    Layer.merge(Layer.mock(SystemBrowsers.SystemBrowsers)({ openExternal })),
   );
 };
 
@@ -360,23 +358,19 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
       };
       const link = codexAuthHandoffUrl(request, true);
       const delivered = Promise.withResolvers<string>();
-      const shell = ElectronShell.ElectronShell.of({
-        openExternal: (value) =>
-          Effect.promise(async () => {
-            const url = new URL(String(value));
-            const callback = new URL(url.searchParams.get("redirect_uri")!);
-            callback.search = new URLSearchParams({
-              state: url.searchParams.get("state")!,
-              code: "test-code",
-              client_id: "oaiapp_test",
-            }).toString();
-            const response = await fetch(callback, { redirect: "manual" });
-            delivered.resolve(response.headers.get("location")!);
-            return true;
-          }),
-        openSystemSettings: () => Effect.succeed(false),
-        copyText: () => Effect.void,
-      });
+      const openExternal = (value: unknown) =>
+        Effect.promise(async () => {
+          const url = new URL(String(value));
+          const callback = new URL(url.searchParams.get("redirect_uri")!);
+          callback.search = new URLSearchParams({
+            state: url.searchParams.get("state")!,
+            code: "test-code",
+            client_id: "oaiapp_test",
+          }).toString();
+          const response = await fetch(callback, { redirect: "manual" });
+          delivered.resolve(response.headers.get("location")!);
+          return true;
+        });
       const listeners = new Map<string, (...args: unknown[]) => void>();
       const electronApp = {
         whenReady: Effect.void,
@@ -402,7 +396,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         assert.strictEqual(delivery?.flowId, request.flowId);
         assert.strictEqual(delivery?.returnUrl, request.returnUrl);
       }).pipe(
-        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell, listeners)),
+        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, openExternal, listeners)),
         Effect.provideService(HostProcess.Arguments, entry === "startup" ? ["t3", link] : ["t3"]),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(

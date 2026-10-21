@@ -10,7 +10,7 @@ import * as Scope from "effect/Scope";
 
 import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/codexAuthHandoff";
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
-import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as SystemBrowsers from "../browser/SystemBrowsers.ts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -59,6 +59,7 @@ export class DesktopClerk extends Context.Service<
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
       | DesktopWebLinks.DesktopWebLinks
+      | SystemBrowsers.SystemBrowsers
       | Scope.Scope
     >;
   }
@@ -99,7 +100,6 @@ function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const electronApp = yield* ElectronApp.ElectronApp;
-  const shell = yield* ElectronShell.ElectronShell;
 
   // Must not yield: the bridge registers a scheme Electron rejects once ready.
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
@@ -148,6 +148,9 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      // Resolved here, not in `make`: the browser choice lives in client settings, which only
+      // exist once the application runtime is built.
+      const systemBrowsers = yield* SystemBrowsers.SystemBrowsers;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -162,7 +165,7 @@ export const make = Effect.gen(function* () {
               try: () =>
                 receiveCodexAuthCallback(
                   request.authorizationUrl,
-                  (url) => runPromise(shell.openExternal(url)),
+                  (url) => runPromise(systemBrowsers.openExternal(url)),
                   (callbackUrl) => codexAuthDeliveryUrl(request, callbackUrl),
                 ),
               catch: () =>

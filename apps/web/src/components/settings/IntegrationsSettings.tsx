@@ -35,6 +35,7 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  type SystemBrowserTarget,
 } from "@t3tools/contracts";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
@@ -42,6 +43,16 @@ import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
+import {
+  findSystemBrowserTargetOption,
+  removedEnvironmentSystemTargets,
+  systemBrowserTargetLabel,
+  systemBrowserTargetOptions,
+  systemBrowserTargetValue,
+  withEnvironmentSystemTarget,
+  type SystemBrowserTargetOptions,
+} from "~/browser/systemBrowserTarget";
+import { useSystemBrowsers } from "~/browser/useSystemBrowsers";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -653,7 +664,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
   return (
     <SettingsRow
       {...searchableSetting("browser-link-target")}
-      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it outside T3 Code either way."
       resetAction={
         !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
@@ -685,6 +696,218 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
         </Select>
       }
     />
+  );
+}
+
+// Neither contains `:`, so they never collide with `systemBrowserTargetValue`.
+const OS_DEFAULT_BROWSER_VALUE = "default";
+const USE_GLOBAL_BROWSER_VALUE = "global";
+
+function SystemBrowserTargetItems({ options }: { readonly options: SystemBrowserTargetOptions }) {
+  return (
+    <>
+      {options.groups.map((group) => (
+        <SelectGroup key={group.browserId}>
+          <SelectGroupLabel>{group.browserName}</SelectGroupLabel>
+          {group.options.map((option) => (
+            <SelectItem hideIndicator key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      ))}
+      {options.missing.map((option) => (
+        <SelectItem hideIndicator key={option.value} value={option.value}>
+          {option.label}
+        </SelectItem>
+      ))}
+    </>
+  );
+}
+
+function SystemBrowserTargetSetting({ disabled }: { readonly disabled: boolean }) {
+  const systemTarget = useClientSettings((settings) => settings.browserSystemTarget);
+  const environmentTargets = useClientSettings(
+    (settings) => settings.browserEnvironmentSystemTargets,
+  );
+  const settingsHydrated = useClientSettingsHydrated();
+  const updateSettings = useUpdatePrimarySettings();
+  const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
+  // Only the desktop shell can launch a specific browser.
+  const available = window.desktopBridge?.listSystemBrowsers !== undefined;
+  const { browsers, scanning, rescan } = useSystemBrowsers(available && !disabled);
+  if (!available) return null;
+
+  const globalLabel =
+    systemTarget === null
+      ? LINK_TARGET_LABELS.system
+      : systemBrowserTargetLabel(browsers, systemTarget);
+  const globalOptions = systemBrowserTargetOptions(browsers, [systemTarget]);
+
+  const environmentRows = environments.map((environment) => ({
+    environmentId: environment.environmentId,
+    label: resolveEnvironmentOptionLabel({
+      isPrimary: environment.environmentId === primaryEnvironment?.environmentId,
+      environmentId: environment.environmentId,
+      runtimeLabel: environment.label,
+    }),
+  }));
+  const removedEnvironmentTargets = removedEnvironmentSystemTargets(
+    environmentTargets,
+    environmentRows.map(({ environmentId }) => environmentId),
+  );
+  // A lone environment needs no picker unless a saved choice must stay visible and clearable.
+  const showEnvironmentTargets =
+    environmentRows.length > 1 || Object.keys(environmentTargets).length > 0;
+
+  const setEnvironmentTarget = (
+    environmentId: EnvironmentId,
+    target: SystemBrowserTarget | null,
+  ) => {
+    if (!settingsHydrated) return;
+    updateSettings({
+      browserEnvironmentSystemTargets: withEnvironmentSystemTarget(
+        getClientSettings().browserEnvironmentSystemTargets,
+        environmentId,
+        target,
+      ),
+    });
+  };
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-system-target")}
+      description="Applies to links that open in your system browser: ⌘ or Ctrl-click, links without a thread, and all links when Open links in is Your default browser."
+      resetAction={
+        !disabled && systemTarget !== null ? (
+          <SettingResetButton
+            label="browser for links opened outside T3 Code"
+            onClick={() => updateSettings({ browserSystemTarget: null })}
+          />
+        ) : null
+      }
+      control={
+        <>
+          <Button size="xs" variant="ghost" disabled={disabled || scanning} onClick={rescan}>
+            {scanning ? "Scanning…" : "Rescan"}
+          </Button>
+          <Select
+            disabled={disabled}
+            value={
+              systemTarget === null
+                ? OS_DEFAULT_BROWSER_VALUE
+                : systemBrowserTargetValue(systemTarget)
+            }
+            onValueChange={(next) => {
+              if (next === OS_DEFAULT_BROWSER_VALUE) {
+                updateSettings({ browserSystemTarget: null });
+              } else if (typeof next === "string") {
+                const target = findSystemBrowserTargetOption(globalOptions, next);
+                if (target) updateSettings({ browserSystemTarget: target });
+              }
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-56"
+              aria-label="Browser for links opened outside T3 Code"
+            >
+              <SelectValue>{globalLabel}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value={OS_DEFAULT_BROWSER_VALUE}>
+                {LINK_TARGET_LABELS.system}
+              </SelectItem>
+              <SystemBrowserTargetItems options={globalOptions} />
+            </SelectPopup>
+          </Select>
+        </>
+      }
+    >
+      {showEnvironmentTargets ? (
+        <div className="mb-2">
+          <h4 className="pb-1.5 text-xs font-medium text-muted-foreground">
+            Links opened outside T3 Code, per environment
+          </h4>
+          <div className="overflow-hidden rounded-lg border border-border/60">
+            {environmentRows.map(({ environmentId, label: environmentLabel }, index) => {
+              const mappedTarget = environmentTargets[environmentId];
+              const options = systemBrowserTargetOptions(browsers, [mappedTarget]);
+              return (
+                <div
+                  key={environmentId}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2",
+                    index > 0 && "border-t border-border/60",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                    {environmentLabel}
+                  </span>
+                  <Select
+                    disabled={disabled || !settingsHydrated}
+                    value={
+                      mappedTarget
+                        ? systemBrowserTargetValue(mappedTarget)
+                        : USE_GLOBAL_BROWSER_VALUE
+                    }
+                    onValueChange={(next) => {
+                      if (typeof next !== "string") return;
+                      setEnvironmentTarget(
+                        environmentId,
+                        next === USE_GLOBAL_BROWSER_VALUE
+                          ? null
+                          : findSystemBrowserTargetOption(options, next),
+                      );
+                    }}
+                  >
+                    <SelectTrigger
+                      size="sm"
+                      className="w-56 shrink-0"
+                      aria-label={`Browser for links opened outside T3 Code from ${environmentLabel}`}
+                    >
+                      <SelectValue>
+                        {mappedTarget
+                          ? systemBrowserTargetLabel(browsers, mappedTarget)
+                          : `Use global (${globalLabel})`}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      <SelectItem hideIndicator value={USE_GLOBAL_BROWSER_VALUE}>
+                        Use global ({globalLabel})
+                      </SelectItem>
+                      <SystemBrowserTargetItems options={options} />
+                    </SelectPopup>
+                  </Select>
+                </div>
+              );
+            })}
+            {removedEnvironmentTargets.map(([environmentId, target]) => (
+              <div
+                key={environmentId}
+                className="flex items-center gap-3 border-t border-border/60 px-3 py-2 first:border-t-0"
+              >
+                <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                  {environmentId} (environment removed)
+                </span>
+                <span className="min-w-0 truncate text-sm text-muted-foreground">
+                  {systemBrowserTargetLabel(browsers, target)}
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={disabled || !settingsHydrated}
+                  onClick={() => setEnvironmentTarget(environmentId, null)}
+                >
+                  Clear
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </SettingsRow>
   );
 }
 
@@ -1622,6 +1845,7 @@ export function IntegrationsSettingsPanel() {
       <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
       <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
+      <SystemBrowserTargetSetting disabled={previewDefaultsDisabled} />
       <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
     </>
   );

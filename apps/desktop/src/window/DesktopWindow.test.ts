@@ -45,6 +45,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as SystemBrowsers from "../browser/SystemBrowsers.ts";
 import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
@@ -310,17 +311,20 @@ function layerTest(input: {
           popupTemplate: input.onPopupTemplate ?? (() => Effect.void),
         }),
         Layer.succeed(ElectronShell.ElectronShell, {
-          openExternal: (url) =>
-            Effect.sync(() => {
-              input.openedExternalUrls?.push(url);
-              return true;
-            }),
+          openExternal: () => Effect.succeed(true),
           openSystemSettings: () => Effect.succeed(true),
           copyText: (text) =>
             Effect.sync(() => {
               input.copiedTexts?.push(text);
             }),
         } satisfies ElectronShell.ElectronShell["Service"]),
+        Layer.mock(SystemBrowsers.SystemBrowsers)({
+          openExternal: (url) =>
+            Effect.sync(() => {
+              input.openedExternalUrls?.push(url);
+              return true;
+            }),
+        }),
         layerElectronTheme,
         layerElectronWindow,
         Layer.mock(PreviewPasskeys.PreviewPasskeys)({
@@ -426,6 +430,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           DesktopState.layer,
           layerElectronApp,
           layerElectronMenu,
+          Layer.mock(SystemBrowsers.SystemBrowsers)({
+            openExternal: () => Effect.succeed(true),
+          }),
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
             openSystemSettings: () => Effect.succeed(true),

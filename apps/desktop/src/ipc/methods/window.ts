@@ -5,6 +5,7 @@ import {
   DesktopThemeSchema,
   EDITORS,
   EditorId,
+  EnvironmentId,
   PickedThemeFileSchema,
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -27,6 +28,7 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as SystemBrowsers from "../../browser/SystemBrowsers.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -291,11 +293,14 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
 
 export const openExternal = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.OPEN_EXTERNAL_CHANNEL,
-  payload: Schema.String,
+  payload: Schema.Struct({
+    url: Schema.String,
+    environmentId: Schema.optionalKey(EnvironmentId),
+  }),
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
-    const shell = yield* ElectronShell.ElectronShell;
-    return yield* shell.openExternal(url);
+  handler: Effect.fn("desktop.ipc.window.openExternal")(function* ({ url, environmentId }) {
+    const systemBrowsers = yield* SystemBrowsers.SystemBrowsers;
+    return yield* systemBrowsers.openExternal(url, environmentId);
   }),
 });
 

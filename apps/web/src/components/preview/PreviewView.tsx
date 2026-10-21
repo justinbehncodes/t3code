@@ -138,7 +138,11 @@ function ServerTabFileNotShown(props: {
             )
           : null
       }
-      onOpen={() => void localApi?.shell.openExternal(props.url).catch(() => undefined)}
+      onOpen={() =>
+        void localApi?.shell
+          .openExternal(props.url, { environmentId: props.threadRef.environmentId })
+          .catch(() => undefined)
+      }
     />
   );
 }
@@ -416,7 +420,9 @@ export function PreviewView({
 
   const handleOpenInBrowser = () => {
     if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
+    void localApi.shell
+      .openExternal(url, { environmentId: threadRef.environmentId })
+      .catch(() => undefined);
   };
 
   const moveTarget = alternatePreviewRuntime(

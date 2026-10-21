@@ -759,6 +759,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "browser-system-target",
+    title: "Browser for links opened outside T3 Code",
+    to: "/settings/integrations",
+    desktopOnly: true,
+    searchTerms: ["chrome edge firefox brave vivaldi browser profile per environment ctrl click"],
+  },
+  {
     id: "browser-search-engine",
     title: "Search engine",
     to: "/settings/integrations",

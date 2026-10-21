@@ -58,6 +58,6 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
     }
     const api = readLocalApi();
     if (!api) throw new Error("Link opening is unavailable.");
-    await api.shell.openExternal(url);
+    await api.shell.openExternal(url, { environmentId: targetThreadRef?.environmentId });
   };
 }

@@ -11,6 +11,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  EnvironmentId,
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
@@ -32,6 +33,7 @@ import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
+import { SystemBrowserTarget } from "./systemBrowser.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
@@ -351,6 +353,16 @@ export const ClientSettingsSchema = Schema.Struct({
 
   browserLinkTarget: BrowserLinkTarget.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_LINK_TARGET)),
+  ),
+
+  // Where system-bound links open on desktop; null is the OS default handler.
+  browserSystemTarget: Schema.NullOr(SystemBrowserTarget).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+
+  // Absent environments fall back to `browserSystemTarget`.
+  browserEnvironmentSystemTargets: Schema.Record(EnvironmentId, SystemBrowserTarget).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
   ),
 
   browserSearchEngine: BrowserSearchEngine.pipe(
@@ -1660,6 +1672,10 @@ export const ClientSettingsPatch = Schema.Struct({
   browserRecordingShowKeyPresses: Schema.optionalKey(Schema.Boolean),
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
+  browserSystemTarget: Schema.optionalKey(Schema.NullOr(SystemBrowserTarget)),
+  browserEnvironmentSystemTargets: Schema.optionalKey(
+    Schema.Record(EnvironmentId, SystemBrowserTarget),
+  ),
   browserSearchEngine: Schema.optionalKey(BrowserSearchEngine),
   browserCustomSearchUrl: Schema.optionalKey(BrowserCustomSearchUrl),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),

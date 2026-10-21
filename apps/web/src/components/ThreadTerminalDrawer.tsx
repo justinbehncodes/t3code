@@ -946,7 +946,7 @@ function TerminalSessionViewport({
             return;
           }
           const fallbackToBrowser = () => {
-            void localApi.shell.openExternal(text).catch((error: unknown) => {
+            void localApi.shell.openExternal(text, { environmentId }).catch((error: unknown) => {
               writeSystemMessage(
                 latestTerminal,
                 error instanceof Error ? error.message : "Unable to open link",

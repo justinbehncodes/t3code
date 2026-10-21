@@ -6,7 +6,7 @@ import {
   cancelCodexAuthCallback,
   CodexAuthCallbackError,
 } from "../../app/CodexAuthCallback.ts";
-import * as ElectronShell from "../../electron/ElectronShell.ts";
+import * as SystemBrowsers from "../../browser/SystemBrowsers.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
@@ -18,13 +18,15 @@ export const receiveProviderAuthCallback = DesktopIpc.makeIpcMethod({
   payload: Request,
   result: Schema.String,
   handler: Effect.fn("desktop.ipc.providerAuth.receive")(function* (authorizationUrl) {
-    const shell = yield* ElectronShell.ElectronShell;
+    const systemBrowsers = yield* SystemBrowsers.SystemBrowsers;
     const windows = yield* ElectronWindow.ElectronWindow;
-    const context = yield* Effect.context<ElectronShell.ElectronShell>();
+    const context = yield* Effect.context<SystemBrowsers.SystemBrowsers>();
     const runPromise = Effect.runPromiseWith(context);
     const callbackUrl = yield* Effect.tryPromise({
       try: () =>
-        receiveCodexAuthCallback(authorizationUrl, (url) => runPromise(shell.openExternal(url))),
+        receiveCodexAuthCallback(authorizationUrl, (url) =>
+          runPromise(systemBrowsers.openExternal(url)),
+        ),
       catch: () =>
         new CodexAuthCallbackError({
           detail:

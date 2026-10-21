@@ -1,4 +1,4 @@
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -86,5 +86,24 @@ describe("getChangedBrowserSettingLabels", () => {
         browserCustomSearchUrl: "https://search.example/?q=%s",
       }),
     ).toEqual(["Search engine"]);
+  });
+
+  it("counts a chosen system browser and per-environment choices so restore clears them", () => {
+    const edgeWork = {
+      browserId: "msedge",
+      browserName: "Microsoft Edge",
+      profileDirectory: "Profile 3",
+      profileName: "Work",
+    };
+    expect(
+      getChangedBrowserSettingLabels({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        browserSystemTarget: edgeWork,
+        browserEnvironmentSystemTargets: { [EnvironmentId.make("environment-work")]: edgeWork },
+      }),
+    ).toEqual([
+      "Browser for links opened outside T3 Code",
+      "Links opened outside T3 Code, per environment",
+    ]);
   });
 });

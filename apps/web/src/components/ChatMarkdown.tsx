@@ -183,7 +183,7 @@ import {
   BrowserPreviewUnavailableError,
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
-import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { isWebUrl, resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
@@ -1167,14 +1167,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 canOpenInApp: canOpenInPreview,
               }) !== "app"
             ) {
-              // Chromium turns an Option/Alt-click into a download that never reaches the
-              // shell. On desktop, open the link here while the key is still down, so link
-              // routers such as Finicky can still read it.
-              if (isElectron && event.altKey) {
+              // On desktop, open web links here rather than through the anchor's window-open
+              // path, which cannot carry the environment whose browser choice applies.
+              // Chromium also turns an Option/Alt-click into a download that never reaches
+              // the shell; opening while the key is still down lets link routers such as
+              // Finicky read it.
+              if (isElectron && (event.altKey || isWebUrl(href))) {
                 event.preventDefault();
                 event.stopPropagation();
                 void readLocalApi()
-                  ?.shell.openExternal(href)
+                  ?.shell.openExternal(href, { environmentId: environmentId ?? undefined })
                   .catch((cause) =>
                     reportMarkdownActionFailure(
                       { operation: "open-link-external", target: href },
@@ -1193,7 +1195,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 result.cause,
               );
               if (squashAtomCommandFailure(result) instanceof BrowserSettingsReadError) return;
-              void readLocalApi()?.shell.openExternal(href);
+              void readLocalApi()?.shell.openExternal(href, {
+                environmentId: environmentId ?? undefined,
+              });
             });
           }}
           onContextMenu={(event) => {
@@ -1224,7 +1228,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
                   );
                 }
               },
-              openExternal: (target) => api.shell.openExternal(target),
+              openExternal: (target) =>
+                api.shell.openExternal(target, { environmentId: environmentId ?? undefined }),
               copyLink: (target) => writeTextToClipboard(target, "link"),
               updateThreadLink: updateThreadPullRequestLink,
               reportFailure: (operation, cause) => {

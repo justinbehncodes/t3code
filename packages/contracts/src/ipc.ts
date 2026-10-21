@@ -4,6 +4,7 @@ import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
+import type { SystemBrowser } from "./systemBrowser.ts";
 import type {
   BrowserImportResult,
   BrowserImportSource,
@@ -1114,7 +1115,15 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   receiveProviderAuthCallback?: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback?: (authorizationUrl: string) => Promise<void>;
-  openExternal: (url: string) => Promise<boolean>;
+  /**
+   * Web links open in the system browser the client settings choose for `environmentId`;
+   * older desktop shells ignore the options and use the OS default.
+   */
+  openExternal: (url: string, options?: OpenExternalOptions) => Promise<boolean>;
+  /** Optional: older desktop builds cannot open a specific browser. */
+  listSystemBrowsers?: (options?: {
+    readonly refresh?: boolean;
+  }) => Promise<ReadonlyArray<SystemBrowser>>;
   openSystemSettings?: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission?: (pane: SystemSettingsPane) => Promise<boolean>;
   /**
@@ -1220,6 +1229,10 @@ export interface DesktopPreviewBridge {
   onOpenLink: (listener: (event: DesktopPreviewOpenLinkEvent) => void) => () => void;
 }
 
+export interface OpenExternalOptions {
+  readonly environmentId?: EnvironmentId | undefined;
+}
+
 export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
@@ -1232,7 +1245,7 @@ export interface LocalApi {
     confirm: (message: string, options?: ConfirmDialogOptions) => Promise<boolean>;
   };
   shell: {
-    openExternal: (url: string) => Promise<void>;
+    openExternal: (url: string, options?: OpenExternalOptions) => Promise<void>;
     openSystemSettings: (pane: SystemSettingsPane) => Promise<void>;
   };
   contextMenu: {

@@ -298,7 +298,7 @@ const LocalState = Schema.Struct({
 });
 const decodeLocalState = Schema.decodeUnknownEffect(Schema.fromJsonString(LocalState));
 
-const isSafeProfileDirectory = (directory: string): boolean =>
+export const isSafeProfileDirectory = (directory: string): boolean =>
   directory.length > 0 &&
   directory !== "." &&
   directory !== ".." &&
